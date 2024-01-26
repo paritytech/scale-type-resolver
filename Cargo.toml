@@ -1,0 +1,19 @@
+[package]
+name = "scale-type-resolver"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["scale-info"]
+
+# Impl the TypeResolver trait on scale_info::PortableRegistry
+scale-info = ["dep:scale-info"]
+
+[dependencies]
+scale-info = { version = "2.7.0", default-features = false, optional = true }
+
+[dev-dependencies]
+bitvec = "1"
+scale-info = { version = "2.7.0", default-features = false, features = ["bit-vec"] }
