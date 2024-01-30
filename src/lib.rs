@@ -8,35 +8,72 @@ use core::iter::ExactSizeIterator;
 pub mod portable_registry;
 
 pub trait TypeResolver {
-    type TypeId: Clone;
-    type Error;
+    type TypeId: TypeId;
+    type Error: core::fmt::Debug + core::fmt::Display;
 
     fn resolve_type<'a, V: ResolvedTypeVisitor<TypeId=Self::TypeId>>(&'a self, type_id: Self::TypeId, visitor: V) -> Result<V::Value<'a>, Self::Error>;
 }
 
 pub trait ResolvedTypeVisitor: Sized {
-    type TypeId: Clone;
+    type TypeId: TypeId;
     type Value<'a>;
 
-    fn visit_not_found<'a>(self, type_id: Self::TypeId) -> Self::Value<'a>;
+    fn visit_unhandled<'a>(self, type_id: Self::TypeId, kind: UnhandledKind) -> Self::Value<'a>;
+    fn visit_not_found<'a>(self, type_id: Self::TypeId) -> Self::Value<'a> {
+        self.visit_unhandled(type_id, UnhandledKind::NotFound)
+    }
     fn visit_composite<'a, Fields>(self, type_id: Self::TypeId, _fields: Fields) -> Self::Value<'a>
-        where
-            Fields: FieldIter<'a, Self::TypeId>;
+        where Fields: FieldIter<'a, Self::TypeId>
+    {
+        self.visit_unhandled(type_id, UnhandledKind::Composite)
+    }
     fn visit_variant<'a, Fields, Var>(self, type_id: Self::TypeId, _variants: Var) -> Self::Value<'a>
         where
             Fields: FieldIter<'a, Self::TypeId>,
-            Var: VariantIter<'a, Fields>;
-    fn visit_sequence<'a>(self, type_id: Self::TypeId) -> Self::Value<'a>;
-    fn visit_array<'a>(self, type_id: Self::TypeId, len: usize) -> Self::Value<'a>;
-    fn visit_tuple<'a, TypeIds>(self, type_id: Self::TypeId, type_ids: TypeIds) -> Self::Value<'a>
-        where
-            TypeIds: ExactSizeIterator<Item=Self::TypeId>;
-    fn visit_primitive<'a>(self, type_id: Self::TypeId, _primitive: Primitive) -> Self::Value<'a>;
-    fn visit_compact<'a>(self, type_id: Self::TypeId) -> Self::Value<'a>;
-    fn visit_bit_sequence<'a>(self, type_id: Self::TypeId, _store_format: BitsStoreFormat, _order_format: BitsOrderFormat) -> Self::Value<'a>;
+            Var: VariantIter<'a, Fields>
+    {
+        self.visit_unhandled(type_id, UnhandledKind::Variant)
+    }
+    fn visit_sequence<'a>(self, type_id: Self::TypeId) -> Self::Value<'a> {
+        self.visit_unhandled(type_id, UnhandledKind::Sequence)
+    }
+    fn visit_array<'a>(self, type_id: Self::TypeId, _len: usize) -> Self::Value<'a> {
+        self.visit_unhandled(type_id, UnhandledKind::Array)
+    }
+    fn visit_tuple<'a, TypeIds>(self, type_id: Self::TypeId, _type_ids: TypeIds) -> Self::Value<'a>
+        where TypeIds: ExactSizeIterator<Item=Self::TypeId>
+    {
+        self.visit_unhandled(type_id, UnhandledKind::Tuple)
+    }
+    fn visit_primitive<'a>(self, type_id: Self::TypeId, _primitive: Primitive) -> Self::Value<'a> {
+        self.visit_unhandled(type_id, UnhandledKind::Primitive)
+    }
+    fn visit_compact<'a>(self, type_id: Self::TypeId) -> Self::Value<'a> {
+        self.visit_unhandled(type_id, UnhandledKind::Compact)
+    }
+    fn visit_bit_sequence<'a>(self, type_id: Self::TypeId, _store_format: BitsStoreFormat, _order_format: BitsOrderFormat) -> Self::Value<'a> {
+        self.visit_unhandled(type_id, UnhandledKind::BitSequence)
+    }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum UnhandledKind {
+    NotFound,
+    Composite,
+    Variant,
+    Sequence,
+    Array,
+    Tuple,
+    Primitive,
+    Compact,
+    BitSequence
+}
+
+pub trait TypeId: Clone + core::fmt::Debug + core::default::Default {}
+impl <T: Clone + core::fmt::Debug + core::default::Default> TypeId for T {}
+
 /// Information about a composite field.
+#[derive(Clone, Debug)]
 pub struct Field<'a, TypeId> {
     pub name: Option<&'a str>,
     pub id: TypeId
@@ -58,6 +95,7 @@ impl<'a, TypeId> Field<'a, TypeId> {
 }
 
 /// Information about a specific variant type.
+#[derive(Clone, Debug)]
 pub struct Variant<'a, Fields> {
     pub index: u8,
     pub name: &'a str,
