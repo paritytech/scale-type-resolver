@@ -11,48 +11,48 @@ pub trait TypeResolver {
     type TypeId: TypeId;
     type Error: core::fmt::Debug + core::fmt::Display;
 
-    fn resolve_type<'a, V: ResolvedTypeVisitor<TypeId=Self::TypeId>>(&'a self, type_id: Self::TypeId, visitor: V) -> Result<V::Value<'a>, Self::Error>;
+    fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId=Self::TypeId>>(&'this self, type_id: &Self::TypeId, visitor: V) -> Result<V::Value, Self::Error>;
 }
 
-pub trait ResolvedTypeVisitor: Sized {
-    type TypeId: TypeId;
-    type Value<'a>;
+pub trait ResolvedTypeVisitor<'resolver>: Sized {
+    type TypeId: TypeId + 'resolver;
+    type Value;
 
-    fn visit_unhandled<'a>(self, type_id: Self::TypeId, kind: UnhandledKind) -> Self::Value<'a>;
-    fn visit_not_found<'a>(self, type_id: Self::TypeId) -> Self::Value<'a> {
-        self.visit_unhandled(type_id, UnhandledKind::NotFound)
+    fn visit_unhandled(self, kind: UnhandledKind) -> Self::Value;
+    fn visit_not_found(self) -> Self::Value {
+        self.visit_unhandled(UnhandledKind::NotFound)
     }
-    fn visit_composite<'a, Fields>(self, type_id: Self::TypeId, _fields: Fields) -> Self::Value<'a>
-        where Fields: FieldIter<'a, Self::TypeId>
+    fn visit_composite<Fields>(self, _fields: Fields) -> Self::Value
+        where Fields: FieldIter<'resolver, Self::TypeId>
     {
-        self.visit_unhandled(type_id, UnhandledKind::Composite)
+        self.visit_unhandled(UnhandledKind::Composite)
     }
-    fn visit_variant<'a, Fields, Var>(self, type_id: Self::TypeId, _variants: Var) -> Self::Value<'a>
+    fn visit_variant<Fields: 'resolver, Var>(self, _variants: Var) -> Self::Value
         where
-            Fields: FieldIter<'a, Self::TypeId>,
-            Var: VariantIter<'a, Fields>
+            Fields: FieldIter<'resolver, Self::TypeId>,
+            Var: VariantIter<'resolver, Fields>
     {
-        self.visit_unhandled(type_id, UnhandledKind::Variant)
+        self.visit_unhandled(UnhandledKind::Variant)
     }
-    fn visit_sequence<'a>(self, type_id: Self::TypeId) -> Self::Value<'a> {
-        self.visit_unhandled(type_id, UnhandledKind::Sequence)
+    fn visit_sequence(self, _type_id: &'resolver Self::TypeId) -> Self::Value {
+        self.visit_unhandled(UnhandledKind::Sequence)
     }
-    fn visit_array<'a>(self, type_id: Self::TypeId, _len: usize) -> Self::Value<'a> {
-        self.visit_unhandled(type_id, UnhandledKind::Array)
+    fn visit_array(self, _type_id: &'resolver Self::TypeId, _len: usize) -> Self::Value {
+        self.visit_unhandled(UnhandledKind::Array)
     }
-    fn visit_tuple<'a, TypeIds>(self, type_id: Self::TypeId, _type_ids: TypeIds) -> Self::Value<'a>
-        where TypeIds: ExactSizeIterator<Item=Self::TypeId>
+    fn visit_tuple<TypeIds>(self, _type_ids: TypeIds) -> Self::Value
+        where TypeIds: ExactSizeIterator<Item=&'resolver Self::TypeId>
     {
-        self.visit_unhandled(type_id, UnhandledKind::Tuple)
+        self.visit_unhandled(UnhandledKind::Tuple)
     }
-    fn visit_primitive<'a>(self, type_id: Self::TypeId, _primitive: Primitive) -> Self::Value<'a> {
-        self.visit_unhandled(type_id, UnhandledKind::Primitive)
+    fn visit_primitive(self, _primitive: Primitive) -> Self::Value {
+        self.visit_unhandled(UnhandledKind::Primitive)
     }
-    fn visit_compact<'a>(self, type_id: Self::TypeId) -> Self::Value<'a> {
-        self.visit_unhandled(type_id, UnhandledKind::Compact)
+    fn visit_compact(self, _type_id: &'resolver Self::TypeId) -> Self::Value {
+        self.visit_unhandled(UnhandledKind::Compact)
     }
-    fn visit_bit_sequence<'a>(self, type_id: Self::TypeId, _store_format: BitsStoreFormat, _order_format: BitsOrderFormat) -> Self::Value<'a> {
-        self.visit_unhandled(type_id, UnhandledKind::BitSequence)
+    fn visit_bit_sequence(self, _store_format: BitsStoreFormat, _order_format: BitsOrderFormat) -> Self::Value {
+        self.visit_unhandled(UnhandledKind::BitSequence)
     }
 }
 
@@ -74,41 +74,41 @@ impl <T: Clone + core::fmt::Debug + core::default::Default> TypeId for T {}
 
 /// Information about a composite field.
 #[derive(Clone, Debug)]
-pub struct Field<'a, TypeId> {
-    pub name: Option<&'a str>,
-    pub id: TypeId
+pub struct Field<'info, TypeId: 'info> {
+    pub name: Option<&'info str>,
+    pub id: &'info TypeId
 }
 
-impl<'a, TypeId> Field<'a, TypeId> {
+impl<'info, TypeId> Field<'info, TypeId> {
     /// Construct a new field with an ID and optional name.
-    pub fn new(id: TypeId, name: Option<&'a str>) -> Self {
+    pub fn new(id: &'info TypeId, name: Option<&'info str>) -> Self {
         Field { id, name }
     }
     /// Create a new unnamed field.
-    pub fn unnamed(id: TypeId) -> Self {
+    pub fn unnamed(id: &'info TypeId) -> Self {
         Field { name: None, id }
     }
     /// Create a new named field.
-    pub fn named(id: TypeId, name: &'a str) -> Self {
+    pub fn named(id: &'info TypeId, name: &'info str) -> Self {
         Field { name: Some(name), id }
     }
 }
 
 /// Information about a specific variant type.
 #[derive(Clone, Debug)]
-pub struct Variant<'a, Fields> {
+pub struct Variant<'info, Fields: 'info> {
     pub index: u8,
-    pub name: &'a str,
+    pub name: &'info str,
     pub fields: Fields,
 }
 
 /// An iterator over a set of fields.
-pub trait FieldIter<'a, TypeId>: ExactSizeIterator<Item = Field<'a, TypeId>> {}
-impl<'a, TypeId, T> FieldIter<'a, TypeId> for T where T: ExactSizeIterator<Item = Field<'a, TypeId>> {}
+pub trait FieldIter<'info, TypeId: 'info>: ExactSizeIterator<Item = Field<'info, TypeId>> {}
+impl<'info, TypeId: 'info, T> FieldIter<'info, TypeId> for T where T: ExactSizeIterator<Item = Field<'info, TypeId>> {}
 
 /// An iterator over a set of variants.
-pub trait VariantIter<'a, Fields>: ExactSizeIterator<Item = Variant<'a, Fields>> {}
-impl<'a, Fields, T> VariantIter<'a, Fields> for T where T: ExactSizeIterator<Item = Variant<'a, Fields>> {}
+pub trait VariantIter<'info, Fields: 'info>: ExactSizeIterator<Item = Variant<'info, Fields>> {}
+impl<'info, Fields: 'info, T> VariantIter<'info, Fields> for T where T: ExactSizeIterator<Item = Variant<'info, Fields>> {}
 
 /// This states the primitive type that we expect.
 #[derive(Clone,Copy,PartialEq,Eq,Debug)]

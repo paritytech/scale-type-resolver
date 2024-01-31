@@ -44,38 +44,39 @@ impl TypeResolver for PortableRegistry {
     type TypeId = u32;
     type Error = Error;
 
-    fn resolve_type<'a, V: ResolvedTypeVisitor<TypeId=Self::TypeId>>(&'a self, type_id: Self::TypeId, visitor: V) -> Result<V::Value<'a>, Self::Error> {
+    fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId=Self::TypeId>>(&'this self, type_id: &Self::TypeId, visitor: V) -> Result<V::Value, Self::Error> {
+        let type_id = *type_id;
         let Some(ty) = self.resolve(type_id) else {
-            return Ok(visitor.visit_not_found(type_id))
+            return Ok(visitor.visit_not_found())
         };
 
         let val = match &ty.type_def {
             scale_info::TypeDef::Composite(composite) => {
-                visitor.visit_composite(type_id, iter_fields(&composite.fields))
+                visitor.visit_composite(iter_fields(&composite.fields))
             },
             scale_info::TypeDef::Variant(variant) => {
-                visitor.visit_variant(type_id, iter_variants(&variant.variants))
+                visitor.visit_variant(iter_variants(&variant.variants))
             },
             scale_info::TypeDef::Sequence(seq) => {
-                visitor.visit_sequence(seq.type_param.id)
+                visitor.visit_sequence(&seq.type_param.id)
             },
             scale_info::TypeDef::Array(arr) => {
-                visitor.visit_array(arr.type_param.id, arr.len as usize)
+                visitor.visit_array(&arr.type_param.id, arr.len as usize)
             },
             scale_info::TypeDef::Tuple(tuple) => {
-                let ids = tuple.fields.iter().map(|f| f.id);
-                visitor.visit_tuple(type_id, ids)
+                let ids = tuple.fields.iter().map(|f| &f.id);
+                visitor.visit_tuple(ids)
             },
             scale_info::TypeDef::Primitive(prim) => {
                 let primitive = into_primitive(prim);
-                visitor.visit_primitive(type_id, primitive)
+                visitor.visit_primitive(primitive)
             },
             scale_info::TypeDef::Compact(compact) => {
-                visitor.visit_compact(compact.type_param.id)
+                visitor.visit_compact(&compact.type_param.id)
             },
             scale_info::TypeDef::BitSequence(ty) => {
                 let (order, store) = bits_from_metadata(ty, self)?;
-                visitor.visit_bit_sequence(type_id, store, order)
+                visitor.visit_bit_sequence(store, order)
             },
         };
 
@@ -118,7 +119,7 @@ fn iter_fields<'a>(fields: &'a [scale_info::Field<PortableForm>]) -> impl ExactS
         .into_iter()
         .map(|f| Field {
             name: f.name.as_deref(),
-            id: f.ty.id
+            id: &f.ty.id
         })
 }
 
