@@ -1,3 +1,5 @@
+extern crate alloc;
+
 use alloc::string::{ String, ToString };
 use core::iter::ExactSizeIterator;
 use crate::{ TypeResolver, ResolvedTypeVisitor, Field, Variant, Primitive, BitsOrderFormat, BitsStoreFormat };
@@ -123,6 +125,9 @@ fn iter_fields<'a>(fields: &'a [scale_info::Field<PortableForm>]) -> impl ExactS
         })
 }
 
+/// Given some type information in the form of a [`scale_info::PortableRegistry`],
+/// and a [`scale_info::TypeDefBitSequence`], this returns information about the
+/// order and store format of the bit sequence.
 pub fn bits_from_metadata(
     ty: &scale_info::TypeDefBitSequence<scale_info::form::PortableForm>,
     types: &scale_info::PortableRegistry,
@@ -169,6 +174,7 @@ pub fn bits_from_metadata(
 #[cfg(test)]
 mod test {
 	use super::*;
+    use alloc::{borrow::ToOwned, boxed::Box, vec::Vec, vec};
 
 	fn make_type<T: scale_info::TypeInfo + 'static>() -> (u32, scale_info::PortableRegistry) {
 		let m = scale_info::MetaType::new::<T>();
@@ -179,37 +185,190 @@ mod test {
 		(id.id, portable_registry)
 	}
 
-	fn assert_bits_from_metadata<T: scale_info::TypeInfo + 'static>(store: BitsStoreFormat, order: BitsOrderFormat) {
-		// Encode to metadata:
+    fn assert_type<T: scale_info::TypeInfo + 'static>(info: ResolvedTypeInfo) {
 		let (id, types) = make_type::<T>();
+        let resolved_info = to_resolved_info(&id, &types);
+        assert_eq!(info, resolved_info);
+    }
 
-		// Pull out said type info:
-		let ty = match &types.resolve(id).unwrap().type_def {
-			scale_info::TypeDef::BitSequence(b) => b,
-			_ => panic!("expected type to look like a bit sequence"),
-		};
+    fn to_resolved_info(type_id: &u32, types: &PortableRegistry) -> ResolvedTypeInfo {
+        match types.resolve_type(type_id, TestResolveVisitor(&types)) {
+            Err(e) => ResolvedTypeInfo::Err(e),
+            Ok(info) => info
+        }
+    }
 
-		// We should be able to obtain a valid Format from it:
-		let actual_format = bits_from_metadata(ty, &types).expect("can obtain BitSeq Format from type");
+    /// A test resolve visitor which just reifies the type information
+    /// into [`ResolvedTypeInfo`] for easy testing.
+    #[derive(Copy,Clone)]
+    struct TestResolveVisitor<'resolver>(&'resolver PortableRegistry);
 
-		// The format should match the one we expect:
-		assert_eq!((order, store), actual_format);
-	}
+    #[derive(Clone,Debug,PartialEq,Eq)]
+    enum ResolvedTypeInfo {
+        Err(Error),
+        NotFound,
+        CompositeOf(Vec<(Option<String>, ResolvedTypeInfo)>),
+        VariantOf(Vec<(String, Vec<(Option<String>, ResolvedTypeInfo)>)>),
+        SequenceOf(Box<ResolvedTypeInfo>),
+        ArrayOf(Box<ResolvedTypeInfo>, usize),
+        TupleOf(Vec<ResolvedTypeInfo>),
+        Primitive(Primitive),
+        Compact(Box<ResolvedTypeInfo>),
+        BitSequence(BitsStoreFormat, BitsOrderFormat)
+    }
 
-	#[test]
-	fn assert_bits_from_metadata_extracts_correct_details() {
-		use bitvec::{
+    impl <'resolver> ResolvedTypeVisitor<'resolver> for TestResolveVisitor<'resolver> {
+        type TypeId = u32;
+        type Value = ResolvedTypeInfo;
+
+        fn visit_unhandled(self, _kind: crate::UnhandledKind) -> Self::Value {
+            panic!("all methods implemented")
+        }
+        fn visit_not_found(self) -> Self::Value {
+            ResolvedTypeInfo::NotFound
+        }
+        fn visit_composite<Fields>(self, fields: Fields) -> Self::Value
+            where Fields: crate::FieldIter<'resolver, Self::TypeId>
+        {
+            let fs = fields.map(|f| {
+                let inner_ty = to_resolved_info(f.id, self.0);
+                (f.name.map(|n| n.to_owned()), inner_ty)
+            }).collect();
+            ResolvedTypeInfo::CompositeOf(fs)
+        }
+        fn visit_variant<Fields: 'resolver, Var>(self, variants: Var) -> Self::Value
+            where
+                Fields: crate::FieldIter<'resolver, Self::TypeId>,
+                Var: crate::VariantIter<'resolver, Fields>
+        {
+            let vs = variants.map(|v| {
+                let fs: Vec<_> = v.fields.map(|f| {
+                    let inner_ty = to_resolved_info(f.id, self.0);
+                    (f.name.map(|n| n.to_owned()), inner_ty)
+                }).collect();
+                (v.name.to_owned(), fs)
+            }).collect();
+            ResolvedTypeInfo::VariantOf(vs)
+        }
+        fn visit_sequence(self, type_id: &'resolver Self::TypeId) -> Self::Value {
+            ResolvedTypeInfo::SequenceOf(Box::new(to_resolved_info(type_id, self.0)))
+        }
+        fn visit_array(self, type_id: &'resolver Self::TypeId, len: usize) -> Self::Value {
+            ResolvedTypeInfo::ArrayOf(Box::new(to_resolved_info(type_id, self.0)), len)
+        }
+        fn visit_tuple<TypeIds>(self, type_ids: TypeIds) -> Self::Value
+            where TypeIds: ExactSizeIterator<Item=&'resolver Self::TypeId>
+        {
+            let ids = type_ids.map(|id| to_resolved_info(id, self.0)).collect();
+            ResolvedTypeInfo::TupleOf(ids)
+        }
+        fn visit_primitive(self, primitive: Primitive) -> Self::Value {
+            ResolvedTypeInfo::Primitive(primitive)
+        }
+        fn visit_compact(self, type_id: &'resolver Self::TypeId) -> Self::Value {
+            ResolvedTypeInfo::Compact(Box::new(to_resolved_info(type_id, self.0)))
+        }
+        fn visit_bit_sequence(self, store_format: BitsStoreFormat, order_format: BitsOrderFormat) -> Self::Value {
+            ResolvedTypeInfo::BitSequence(store_format, order_format)
+        }
+    }
+
+    #[test]
+    fn resolve_primitives() {
+        assert_type::<u8>(ResolvedTypeInfo::Primitive(Primitive::U8));
+        assert_type::<u16>(ResolvedTypeInfo::Primitive(Primitive::U16));
+        assert_type::<u32>(ResolvedTypeInfo::Primitive(Primitive::U32));
+        assert_type::<u64>(ResolvedTypeInfo::Primitive(Primitive::U64));
+        assert_type::<u128>(ResolvedTypeInfo::Primitive(Primitive::U128));
+        assert_type::<i8>(ResolvedTypeInfo::Primitive(Primitive::I8));
+        assert_type::<i16>(ResolvedTypeInfo::Primitive(Primitive::I16));
+        assert_type::<i32>(ResolvedTypeInfo::Primitive(Primitive::I32));
+        assert_type::<i64>(ResolvedTypeInfo::Primitive(Primitive::I64));
+        assert_type::<i128>(ResolvedTypeInfo::Primitive(Primitive::I128));
+        assert_type::<String>(ResolvedTypeInfo::Primitive(Primitive::Str));
+        assert_type::<&str>(ResolvedTypeInfo::Primitive(Primitive::Str));
+        assert_type::<bool>(ResolvedTypeInfo::Primitive(Primitive::Bool));
+        assert_type::<char>(ResolvedTypeInfo::Primitive(Primitive::Char));
+    }
+
+    #[test]
+    fn resolve_composites() {
+        assert_type::<(u8, bool, String)>(ResolvedTypeInfo::TupleOf(vec![
+            ResolvedTypeInfo::Primitive(Primitive::U8),
+            ResolvedTypeInfo::Primitive(Primitive::Bool),
+            ResolvedTypeInfo::Primitive(Primitive::Str),
+        ]));
+
+        #[derive(scale_info::TypeInfo)]
+        struct Unnamed(bool, u8);
+
+        assert_type::<Unnamed>(ResolvedTypeInfo::CompositeOf(vec![
+            (None, ResolvedTypeInfo::Primitive(Primitive::Bool)),
+            (None, ResolvedTypeInfo::Primitive(Primitive::U8)),
+        ]));
+
+        #[derive(scale_info::TypeInfo)]
+        #[allow(dead_code)]
+        struct Named { b: bool, u: u8 }
+
+        assert_type::<Named>(ResolvedTypeInfo::CompositeOf(vec![
+            (Some("b".to_owned()), ResolvedTypeInfo::Primitive(Primitive::Bool)),
+            (Some("u".to_owned()), ResolvedTypeInfo::Primitive(Primitive::U8)),
+        ]));
+    }
+
+    #[test]
+    fn resolve_enums() {
+        #[derive(scale_info::TypeInfo)]
+        #[allow(dead_code)]
+        enum SomeEnum {
+            A,
+            B(u8, bool),
+            C{ hello: String }
+        }
+
+        assert_type::<SomeEnum>(ResolvedTypeInfo::VariantOf(vec![
+            (
+                "A".to_owned(),
+                vec![]
+            ),
+            (
+                "B".to_owned(),
+                vec![
+                    (None, ResolvedTypeInfo::Primitive(Primitive::U8)),
+                    (None, ResolvedTypeInfo::Primitive(Primitive::Bool)),
+                ]
+            ),
+            (
+                "C".to_owned(),
+                vec![
+                    (Some("hello".to_owned()), ResolvedTypeInfo::Primitive(Primitive::Str))
+                ]
+            )
+        ]));
+    }
+
+    #[test]
+    fn resolve_sequences() {
+        assert_type::<Vec<u8>>(ResolvedTypeInfo::SequenceOf(Box::new(ResolvedTypeInfo::Primitive(Primitive::U8))));
+        assert_type::<&[u8]>(ResolvedTypeInfo::SequenceOf(Box::new(ResolvedTypeInfo::Primitive(Primitive::U8))));
+        assert_type::<[bool; 16]>(ResolvedTypeInfo::ArrayOf(Box::new(ResolvedTypeInfo::Primitive(Primitive::Bool)), 16));
+    }
+
+    // This also indirectly tests that bits_from_metadata works as expected.
+    #[test]
+    fn resolve_bitvecs() {
+        use bitvec::{
 			order::{Lsb0, Msb0},
 			vec::BitVec,
 		};
 
-		assert_bits_from_metadata::<BitVec<u8, Lsb0>>(BitsStoreFormat::U8, BitsOrderFormat::Lsb0);
-		assert_bits_from_metadata::<BitVec<u16, Lsb0>>(BitsStoreFormat::U16, BitsOrderFormat::Lsb0);
-		assert_bits_from_metadata::<BitVec<u32, Lsb0>>(BitsStoreFormat::U32, BitsOrderFormat::Lsb0);
-		assert_bits_from_metadata::<BitVec<u64, Lsb0>>(BitsStoreFormat::U64, BitsOrderFormat::Lsb0);
-		assert_bits_from_metadata::<BitVec<u8, Msb0>>(BitsStoreFormat::U8, BitsOrderFormat::Msb0);
-		assert_bits_from_metadata::<BitVec<u16, Msb0>>(BitsStoreFormat::U16, BitsOrderFormat::Msb0);
-		assert_bits_from_metadata::<BitVec<u32, Msb0>>(BitsStoreFormat::U32, BitsOrderFormat::Msb0);
-		assert_bits_from_metadata::<BitVec<u64, Msb0>>(BitsStoreFormat::U64, BitsOrderFormat::Msb0);
-	}
+        assert_type::<BitVec<u8, Msb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U8, BitsOrderFormat::Msb0));
+        assert_type::<BitVec<u16, Msb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U16, BitsOrderFormat::Msb0));
+        assert_type::<BitVec<u32, Msb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U32, BitsOrderFormat::Msb0));
+        assert_type::<BitVec<u64, Msb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U64, BitsOrderFormat::Msb0));        assert_type::<BitVec<u8, Lsb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U8, BitsOrderFormat::Lsb0));
+        assert_type::<BitVec<u16, Lsb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U16, BitsOrderFormat::Lsb0));
+        assert_type::<BitVec<u32, Lsb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U32, BitsOrderFormat::Lsb0));
+        assert_type::<BitVec<u64, Lsb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U64, BitsOrderFormat::Lsb0));
+    }
 }
