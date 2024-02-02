@@ -2,8 +2,11 @@
 name = "scale-type-resolver"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["Parity Technologies <admin@parity.io>"]
+license = "Apache-2.0"
+repository = "https://github.com/paritytech/scale-type-resolver"
+homepage = "https://www.parity.io/"
+keywords = ["parity", "scale", "decoding"]
 
 [features]
 default = ["scale-info"]
