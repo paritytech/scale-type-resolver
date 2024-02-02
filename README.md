@@ -9,3 +9,5 @@ metadata).
 
 It's unlikely that you'd depend on this library directly; more likely you'd depend on a library
 like `scale-decode` which uses and re-exports the `TypeResolver` trait itself.
+
+This crate is `no_std` by default and doesn't require `alloc` except for tests.

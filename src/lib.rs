@@ -2,11 +2,13 @@
 //! any type that is capable of being given a type ID and resolving that into information about
 //! how the type is SCALE encoded. This allows libraries like `scale-decode` to be able to decode
 //! SCALE encoded bytes using either a modern type resolver like [`scale_info::PortableRegistry`],
-//! or using entirely custom type resolvers (which we need in order decode blocks from pre-V14
+//! or using entirely custom type resolvers (which we would need in order decode blocks from pre-V14
 //! metadata).
 //!
 //! It's unlikely that you'd depend on this library directly; more likely you'd depend on a library
 //! like `scale-decode` which uses and re-exports the [`TypeResolver`] trait itself.
+//!
+//! This crate is `no_std` by default and doesn't require `alloc` except for tests.
 #![no_std]
 #![deny(missing_docs)]
 
@@ -36,7 +38,11 @@ pub trait TypeResolver {
 
     /// Given a type ID, this calls a method on the provided [`ResolvedTypeVisitor`] describing the
     /// outcome of resolving the SCALE encoding information.
-    fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId=Self::TypeId>>(&'this self, type_id: &Self::TypeId, visitor: V) -> Result<V::Value, Self::Error>;
+    fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
+        &'this self,
+        type_id: &Self::TypeId,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>;
 }
 
 /// A glorified set of callbacks, exactly one of which will fire depending on the outcome of calling
@@ -62,7 +68,8 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
     /// Called when the type ID corresponds to a composite type. This is provided an iterator
     /// over each of the fields and their type IDs that the composite type contains.
     fn visit_composite<Fields>(self, _fields: Fields) -> Self::Value
-        where Fields: FieldIter<'resolver, Self::TypeId>
+    where
+        Fields: FieldIter<'resolver, Self::TypeId>,
     {
         self.visit_unhandled(UnhandledKind::Composite)
     }
@@ -70,9 +77,9 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
     /// Called when the type ID corresponds to a variant type. This is provided the list of
     /// variants (and for each variant, the fields within it) that the type could be encoded as.
     fn visit_variant<Fields: 'resolver, Var>(self, _variants: Var) -> Self::Value
-        where
-            Fields: FieldIter<'resolver, Self::TypeId>,
-            Var: VariantIter<'resolver, Fields>
+    where
+        Fields: FieldIter<'resolver, Self::TypeId>,
+        Var: VariantIter<'resolver, Fields>,
     {
         self.visit_unhandled(UnhandledKind::Variant)
     }
@@ -92,7 +99,8 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
 
     /// Called when the type ID corresponds to a tuple of values whose type IDs are provided here.
     fn visit_tuple<TypeIds>(self, _type_ids: TypeIds) -> Self::Value
-        where TypeIds: ExactSizeIterator<Item=&'resolver Self::TypeId>
+    where
+        TypeIds: ExactSizeIterator<Item = &'resolver Self::TypeId>,
     {
         self.visit_unhandled(UnhandledKind::Tuple)
     }
@@ -110,7 +118,11 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
     }
 
     /// Called when the type ID corresponds to a bit sequence, whose store and order types are given.
-    fn visit_bit_sequence(self, _store_format: BitsStoreFormat, _order_format: BitsOrderFormat) -> Self::Value {
+    fn visit_bit_sequence(
+        self,
+        _store_format: BitsStoreFormat,
+        _order_format: BitsOrderFormat,
+    ) -> Self::Value {
         self.visit_unhandled(UnhandledKind::BitSequence)
     }
 }
@@ -129,12 +141,12 @@ pub enum UnhandledKind {
     Tuple,
     Primitive,
     Compact,
-    BitSequence
+    BitSequence,
 }
 
 /// A trait representing a type ID.
 pub trait TypeId: core::fmt::Debug + core::default::Default {}
-impl <T: core::fmt::Debug + core::default::Default> TypeId for T {}
+impl<T: core::fmt::Debug + core::default::Default> TypeId for T {}
 
 /// Information about a composite field.
 #[derive(Debug)]
@@ -142,13 +154,13 @@ pub struct Field<'resolver, TypeId: 'resolver> {
     /// The name of the field, or `None` if the field is unnamed.
     pub name: Option<&'resolver str>,
     /// The type ID corresponding to the value for this field.
-    pub id: &'resolver TypeId
+    pub id: &'resolver TypeId,
 }
 
-impl <'resolver, TypeId: 'resolver> Copy for Field<'resolver, TypeId> {}
-impl <'resolver, TypeId: 'resolver> Clone for Field<'resolver, TypeId> {
+impl<'resolver, TypeId: 'resolver> Copy for Field<'resolver, TypeId> {}
+impl<'resolver, TypeId: 'resolver> Clone for Field<'resolver, TypeId> {
     fn clone(&self) -> Self {
-        Self { name: self.name, id: self.id }
+        *self
     }
 }
 
@@ -163,7 +175,10 @@ impl<'resolver, TypeId> Field<'resolver, TypeId> {
     }
     /// Create a new named field.
     pub fn named(id: &'resolver TypeId, name: &'resolver str) -> Self {
-        Field { name: Some(name), id }
+        Field {
+            name: Some(name),
+            id,
+        }
     }
 }
 
@@ -179,17 +194,29 @@ pub struct Variant<'resolver, Fields: 'resolver> {
 }
 
 /// An iterator over a set of fields.
-pub trait FieldIter<'resolver, TypeId: 'resolver>: ExactSizeIterator<Item = Field<'resolver, TypeId>> {}
-impl<'resolver, TypeId: 'resolver, T> FieldIter<'resolver, TypeId> for T where T: ExactSizeIterator<Item = Field<'resolver, TypeId>> {}
+pub trait FieldIter<'resolver, TypeId: 'resolver>:
+    ExactSizeIterator<Item = Field<'resolver, TypeId>>
+{
+}
+impl<'resolver, TypeId: 'resolver, T> FieldIter<'resolver, TypeId> for T where
+    T: ExactSizeIterator<Item = Field<'resolver, TypeId>>
+{
+}
 
 /// An iterator over a set of variants.
-pub trait VariantIter<'resolver, Fields: 'resolver>: ExactSizeIterator<Item = Variant<'resolver, Fields>> {}
-impl<'resolver, Fields: 'resolver, T> VariantIter<'resolver, Fields> for T where T: ExactSizeIterator<Item = Variant<'resolver, Fields>> {}
+pub trait VariantIter<'resolver, Fields: 'resolver>:
+    ExactSizeIterator<Item = Variant<'resolver, Fields>>
+{
+}
+impl<'resolver, Fields: 'resolver, T> VariantIter<'resolver, Fields> for T where
+    T: ExactSizeIterator<Item = Variant<'resolver, Fields>>
+{
+}
 
 /// This is handed to [`ResolvedTypeVisitor::visit_primitive()`], and
 /// denotes the exact shape of the primitive type that we have resolved.
 #[allow(missing_docs)]
-#[derive(Clone,Copy,PartialEq,Eq,Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Primitive {
     Bool,
     Char,
@@ -219,22 +246,22 @@ pub enum Primitive {
 /// These are equivalent to `bitvec`'s `order::Lsb0` and `order::Msb0`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum BitsOrderFormat {
-	/// Least significant bit first.
-	Lsb0,
-	/// Most significant bit first.
-	Msb0,
+    /// Least significant bit first.
+    Lsb0,
+    /// Most significant bit first.
+    Msb0,
 }
 
 /// This is a runtime representation of the store type that we're targeting. These
 /// are equivalent to the `bitvec` store types `u8`, `u16` and so on.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum BitsStoreFormat {
-	/// Equivalent to [`u8`].
-	U8,
-	/// Equivalent to [`u16`].
-	U16,
-	/// Equivalent to [`u32`].
-	U32,
-	/// Equivalent to [`u64`].
-	U64,
+    /// Equivalent to [`u8`].
+    U8,
+    /// Equivalent to [`u16`].
+    U16,
+    /// Equivalent to [`u32`].
+    U32,
+    /// Equivalent to [`u64`].
+    U64,
 }

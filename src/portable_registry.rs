@@ -1,85 +1,84 @@
-extern crate alloc;
-
-use alloc::string::{ String, ToString };
+use crate::{
+    BitsOrderFormat, BitsStoreFormat, Field, Primitive, ResolvedTypeVisitor, TypeResolver, Variant,
+};
 use core::iter::ExactSizeIterator;
-use crate::{ TypeResolver, ResolvedTypeVisitor, Field, Variant, Primitive, BitsOrderFormat, BitsStoreFormat };
-use scale_info::{ PortableRegistry, form::PortableForm };
+use scale_info::{form::PortableForm, PortableRegistry};
 
 /// An error that can occur when we try to encode or decode to a SCALE bit sequence type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-	/// The registry did not contain the bit order type listed.
-	OrderFormatNotFound(u32),
-	/// The registry did not contain the bit store type listed.
-	StoreFormatNotFound(u32),
-	/// The bit order type did not have a valid identifier/name.
-	NoBitOrderIdent,
-	/// The bit store type that we found was not what we expected (a primitive u8/u16/u32/u64).
-	StoreFormatNotSupported(String),
-	/// The bit order type name that we found was not what we expected ("Lsb0" or "Msb0").
-	OrderFormatNotSupported(String),
+    /// The registry did not contain the bit order type listed.
+    OrderFormatNotFound(u32),
+    /// The registry did not contain the bit store type listed.
+    StoreFormatNotFound(u32),
+    /// The bit order type did not have a valid identifier/name.
+    NoBitOrderIdent,
+    /// The bit store type that we found was not what we expected (a primitive u8/u16/u32/u64).
+    UnsupportedBitStoreFormatEncountered,
+    /// The bit order type name that we found was not what we expected ("Lsb0" or "Msb0").
+    UnsupportedBitOrderFormatEncountered,
 }
 
 impl core::fmt::Display for Error {
-	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-		match self {
-			Error::OrderFormatNotFound(n) => {
-				write!(f, "Bit order type {n} not found in registry")
-			}
-			Error::StoreFormatNotFound(n) => {
-				write!(f, "Bit store type {n} not found in registry")
-			}
-			Error::NoBitOrderIdent => {
-				write!(f, "Bit order cannot be identified")
-			}
-			Error::StoreFormatNotSupported(s) => {
-				write!(f, "Bit store type '{s}' is not supported")
-			}
-			Error::OrderFormatNotSupported(s) => {
-				write!(f, "Bit order type '{s}' is not supported")
-			}
-		}
-	}
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Error::OrderFormatNotFound(n) => {
+                write!(f, "Bit order type {n} not found in registry")
+            }
+            Error::StoreFormatNotFound(n) => {
+                write!(f, "Bit store type {n} not found in registry")
+            }
+            Error::NoBitOrderIdent => {
+                write!(f, "Bit order cannot be identified")
+            }
+            Error::UnsupportedBitStoreFormatEncountered => {
+                write!(f, "Unsupported bit store format encountered")
+            }
+            Error::UnsupportedBitOrderFormatEncountered => {
+                write!(f, "Unsupported bit order format encountered")
+            }
+        }
+    }
 }
 
 impl TypeResolver for PortableRegistry {
     type TypeId = u32;
     type Error = Error;
 
-    fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId=Self::TypeId>>(&'this self, type_id: &Self::TypeId, visitor: V) -> Result<V::Value, Self::Error> {
+    fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
+        &'this self,
+        type_id: &Self::TypeId,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error> {
         let type_id = *type_id;
         let Some(ty) = self.resolve(type_id) else {
-            return Ok(visitor.visit_not_found())
+            return Ok(visitor.visit_not_found());
         };
 
         let val = match &ty.type_def {
             scale_info::TypeDef::Composite(composite) => {
                 visitor.visit_composite(iter_fields(&composite.fields))
-            },
+            }
             scale_info::TypeDef::Variant(variant) => {
                 visitor.visit_variant(iter_variants(&variant.variants))
-            },
-            scale_info::TypeDef::Sequence(seq) => {
-                visitor.visit_sequence(&seq.type_param.id)
-            },
+            }
+            scale_info::TypeDef::Sequence(seq) => visitor.visit_sequence(&seq.type_param.id),
             scale_info::TypeDef::Array(arr) => {
                 visitor.visit_array(&arr.type_param.id, arr.len as usize)
-            },
+            }
             scale_info::TypeDef::Tuple(tuple) => {
                 let ids = tuple.fields.iter().map(|f| &f.id);
                 visitor.visit_tuple(ids)
-            },
+            }
             scale_info::TypeDef::Primitive(prim) => {
                 let primitive = into_primitive(prim);
                 visitor.visit_primitive(primitive)
-            },
-            scale_info::TypeDef::Compact(compact) => {
-                visitor.visit_compact(&compact.type_param.id)
-            },
+            }
+            scale_info::TypeDef::Compact(compact) => visitor.visit_compact(&compact.type_param.id),
             scale_info::TypeDef::BitSequence(ty) => {
                 let (order, store) = bits_from_metadata(ty, self)?;
                 visitor.visit_bit_sequence(store, order)
-            },
+            }
         };
 
         Ok(val)
@@ -106,23 +105,23 @@ fn into_primitive(primitive: &scale_info::TypeDefPrimitive) -> Primitive {
     }
 }
 
-fn iter_variants<'a>(variants: &'a [scale_info::Variant<PortableForm>]) -> impl ExactSizeIterator<Item=Variant<'a, impl ExactSizeIterator<Item=Field<'a, u32>>>> {
-    variants
-        .iter()
-        .map(|v| Variant {
-            index: v.index,
-            name: &v.name,
-            fields: iter_fields(&v.fields)
-        })
+fn iter_variants(
+    variants: &'_ [scale_info::Variant<PortableForm>],
+) -> impl ExactSizeIterator<Item = Variant<'_, impl ExactSizeIterator<Item = Field<'_, u32>>>> {
+    variants.iter().map(|v| Variant {
+        index: v.index,
+        name: &v.name,
+        fields: iter_fields(&v.fields),
+    })
 }
 
-fn iter_fields<'a>(fields: &'a [scale_info::Field<PortableForm>]) -> impl ExactSizeIterator<Item=Field<'a, u32>> {
-    fields
-        .into_iter()
-        .map(|f| Field {
-            name: f.name.as_deref(),
-            id: &f.ty.id
-        })
+fn iter_fields(
+    fields: &'_ [scale_info::Field<PortableForm>],
+) -> impl ExactSizeIterator<Item = Field<'_, u32>> {
+    fields.iter().map(|f| Field {
+        name: f.name.as_deref(),
+        id: &f.ty.id,
+    })
 }
 
 /// Given some type information in the form of a [`scale_info::PortableRegistry`],
@@ -157,53 +156,54 @@ pub fn bits_from_metadata(
         TypeDef::Primitive(TypeDefPrimitive::U64) => Some(BitsStoreFormat::U64),
         _ => None,
     }
-    .ok_or_else(|| {
-        Error::StoreFormatNotSupported(alloc::format!("{bit_store_def:?}"))
-    })?;
+    .ok_or(Error::UnsupportedBitStoreFormatEncountered)?;
 
     let bit_order_out = match &*bit_order_def {
         "Lsb0" => Some(BitsOrderFormat::Lsb0),
         "Msb0" => Some(BitsOrderFormat::Msb0),
         _ => None,
     }
-    .ok_or(Error::OrderFormatNotSupported(bit_order_def.to_string()))?;
+    .ok_or(Error::UnsupportedBitOrderFormatEncountered)?;
 
     Ok((bit_order_out, bit_store_out))
 }
 
 #[cfg(test)]
 mod test {
-	use super::*;
-    use alloc::{borrow::ToOwned, boxed::Box, vec::Vec, vec};
+    extern crate alloc;
 
-	fn make_type<T: scale_info::TypeInfo + 'static>() -> (u32, scale_info::PortableRegistry) {
-		let m = scale_info::MetaType::new::<T>();
-		let mut types = scale_info::Registry::new();
-		let id = types.register_type(&m);
-		let portable_registry: scale_info::PortableRegistry = types.into();
+    use super::*;
+    use alloc::{borrow::ToOwned, boxed::Box, string::String, vec, vec::Vec};
 
-		(id.id, portable_registry)
-	}
+    fn make_type<T: scale_info::TypeInfo + 'static>() -> (u32, scale_info::PortableRegistry) {
+        let m = scale_info::MetaType::new::<T>();
+        let mut types = scale_info::Registry::new();
+        let id = types.register_type(&m);
+        let portable_registry: scale_info::PortableRegistry = types.into();
+
+        (id.id, portable_registry)
+    }
 
     fn assert_type<T: scale_info::TypeInfo + 'static>(info: ResolvedTypeInfo) {
-		let (id, types) = make_type::<T>();
+        let (id, types) = make_type::<T>();
         let resolved_info = to_resolved_info(&id, &types);
         assert_eq!(info, resolved_info);
     }
 
     fn to_resolved_info(type_id: &u32, types: &PortableRegistry) -> ResolvedTypeInfo {
-        match types.resolve_type(type_id, TestResolveVisitor(&types)) {
+        match types.resolve_type(type_id, TestResolveVisitor(types)) {
             Err(e) => ResolvedTypeInfo::Err(e),
-            Ok(info) => info
+            Ok(info) => info,
         }
     }
 
     /// A test resolve visitor which just reifies the type information
     /// into [`ResolvedTypeInfo`] for easy testing.
-    #[derive(Copy,Clone)]
+    #[derive(Copy, Clone)]
     struct TestResolveVisitor<'resolver>(&'resolver PortableRegistry);
 
-    #[derive(Clone,Debug,PartialEq,Eq)]
+    #[allow(clippy::type_complexity)]
+    #[derive(Clone, Debug, PartialEq, Eq)]
     enum ResolvedTypeInfo {
         Err(Error),
         NotFound,
@@ -214,10 +214,10 @@ mod test {
         TupleOf(Vec<ResolvedTypeInfo>),
         Primitive(Primitive),
         Compact(Box<ResolvedTypeInfo>),
-        BitSequence(BitsStoreFormat, BitsOrderFormat)
+        BitSequence(BitsStoreFormat, BitsOrderFormat),
     }
 
-    impl <'resolver> ResolvedTypeVisitor<'resolver> for TestResolveVisitor<'resolver> {
+    impl<'resolver> ResolvedTypeVisitor<'resolver> for TestResolveVisitor<'resolver> {
         type TypeId = u32;
         type Value = ResolvedTypeInfo;
 
@@ -228,26 +228,34 @@ mod test {
             ResolvedTypeInfo::NotFound
         }
         fn visit_composite<Fields>(self, fields: Fields) -> Self::Value
-            where Fields: crate::FieldIter<'resolver, Self::TypeId>
+        where
+            Fields: crate::FieldIter<'resolver, Self::TypeId>,
         {
-            let fs = fields.map(|f| {
-                let inner_ty = to_resolved_info(f.id, self.0);
-                (f.name.map(|n| n.to_owned()), inner_ty)
-            }).collect();
+            let fs = fields
+                .map(|f| {
+                    let inner_ty = to_resolved_info(f.id, self.0);
+                    (f.name.map(|n| n.to_owned()), inner_ty)
+                })
+                .collect();
             ResolvedTypeInfo::CompositeOf(fs)
         }
         fn visit_variant<Fields: 'resolver, Var>(self, variants: Var) -> Self::Value
-            where
-                Fields: crate::FieldIter<'resolver, Self::TypeId>,
-                Var: crate::VariantIter<'resolver, Fields>
+        where
+            Fields: crate::FieldIter<'resolver, Self::TypeId>,
+            Var: crate::VariantIter<'resolver, Fields>,
         {
-            let vs = variants.map(|v| {
-                let fs: Vec<_> = v.fields.map(|f| {
-                    let inner_ty = to_resolved_info(f.id, self.0);
-                    (f.name.map(|n| n.to_owned()), inner_ty)
-                }).collect();
-                (v.name.to_owned(), fs)
-            }).collect();
+            let vs = variants
+                .map(|v| {
+                    let fs: Vec<_> = v
+                        .fields
+                        .map(|f| {
+                            let inner_ty = to_resolved_info(f.id, self.0);
+                            (f.name.map(|n| n.to_owned()), inner_ty)
+                        })
+                        .collect();
+                    (v.name.to_owned(), fs)
+                })
+                .collect();
             ResolvedTypeInfo::VariantOf(vs)
         }
         fn visit_sequence(self, type_id: &'resolver Self::TypeId) -> Self::Value {
@@ -257,7 +265,8 @@ mod test {
             ResolvedTypeInfo::ArrayOf(Box::new(to_resolved_info(type_id, self.0)), len)
         }
         fn visit_tuple<TypeIds>(self, type_ids: TypeIds) -> Self::Value
-            where TypeIds: ExactSizeIterator<Item=&'resolver Self::TypeId>
+        where
+            TypeIds: ExactSizeIterator<Item = &'resolver Self::TypeId>,
         {
             let ids = type_ids.map(|id| to_resolved_info(id, self.0)).collect();
             ResolvedTypeInfo::TupleOf(ids)
@@ -268,7 +277,11 @@ mod test {
         fn visit_compact(self, type_id: &'resolver Self::TypeId) -> Self::Value {
             ResolvedTypeInfo::Compact(Box::new(to_resolved_info(type_id, self.0)))
         }
-        fn visit_bit_sequence(self, store_format: BitsStoreFormat, order_format: BitsOrderFormat) -> Self::Value {
+        fn visit_bit_sequence(
+            self,
+            store_format: BitsStoreFormat,
+            order_format: BitsOrderFormat,
+        ) -> Self::Value {
             ResolvedTypeInfo::BitSequence(store_format, order_format)
         }
     }
@@ -309,11 +322,20 @@ mod test {
 
         #[derive(scale_info::TypeInfo)]
         #[allow(dead_code)]
-        struct Named { b: bool, u: u8 }
+        struct Named {
+            b: bool,
+            u: u8,
+        }
 
         assert_type::<Named>(ResolvedTypeInfo::CompositeOf(vec![
-            (Some("b".to_owned()), ResolvedTypeInfo::Primitive(Primitive::Bool)),
-            (Some("u".to_owned()), ResolvedTypeInfo::Primitive(Primitive::U8)),
+            (
+                Some("b".to_owned()),
+                ResolvedTypeInfo::Primitive(Primitive::Bool),
+            ),
+            (
+                Some("u".to_owned()),
+                ResolvedTypeInfo::Primitive(Primitive::U8),
+            ),
         ]));
     }
 
@@ -324,51 +346,81 @@ mod test {
         enum SomeEnum {
             A,
             B(u8, bool),
-            C{ hello: String }
+            C { hello: String },
         }
 
         assert_type::<SomeEnum>(ResolvedTypeInfo::VariantOf(vec![
-            (
-                "A".to_owned(),
-                vec![]
-            ),
+            ("A".to_owned(), vec![]),
             (
                 "B".to_owned(),
                 vec![
                     (None, ResolvedTypeInfo::Primitive(Primitive::U8)),
                     (None, ResolvedTypeInfo::Primitive(Primitive::Bool)),
-                ]
+                ],
             ),
             (
                 "C".to_owned(),
-                vec![
-                    (Some("hello".to_owned()), ResolvedTypeInfo::Primitive(Primitive::Str))
-                ]
-            )
+                vec![(
+                    Some("hello".to_owned()),
+                    ResolvedTypeInfo::Primitive(Primitive::Str),
+                )],
+            ),
         ]));
     }
 
     #[test]
     fn resolve_sequences() {
-        assert_type::<Vec<u8>>(ResolvedTypeInfo::SequenceOf(Box::new(ResolvedTypeInfo::Primitive(Primitive::U8))));
-        assert_type::<&[u8]>(ResolvedTypeInfo::SequenceOf(Box::new(ResolvedTypeInfo::Primitive(Primitive::U8))));
-        assert_type::<[bool; 16]>(ResolvedTypeInfo::ArrayOf(Box::new(ResolvedTypeInfo::Primitive(Primitive::Bool)), 16));
+        assert_type::<Vec<u8>>(ResolvedTypeInfo::SequenceOf(Box::new(
+            ResolvedTypeInfo::Primitive(Primitive::U8),
+        )));
+        assert_type::<&[u8]>(ResolvedTypeInfo::SequenceOf(Box::new(
+            ResolvedTypeInfo::Primitive(Primitive::U8),
+        )));
+        assert_type::<[bool; 16]>(ResolvedTypeInfo::ArrayOf(
+            Box::new(ResolvedTypeInfo::Primitive(Primitive::Bool)),
+            16,
+        ));
     }
 
     // This also indirectly tests that bits_from_metadata works as expected.
     #[test]
     fn resolve_bitvecs() {
         use bitvec::{
-			order::{Lsb0, Msb0},
-			vec::BitVec,
-		};
+            order::{Lsb0, Msb0},
+            vec::BitVec,
+        };
 
-        assert_type::<BitVec<u8, Msb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U8, BitsOrderFormat::Msb0));
-        assert_type::<BitVec<u16, Msb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U16, BitsOrderFormat::Msb0));
-        assert_type::<BitVec<u32, Msb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U32, BitsOrderFormat::Msb0));
-        assert_type::<BitVec<u64, Msb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U64, BitsOrderFormat::Msb0));        assert_type::<BitVec<u8, Lsb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U8, BitsOrderFormat::Lsb0));
-        assert_type::<BitVec<u16, Lsb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U16, BitsOrderFormat::Lsb0));
-        assert_type::<BitVec<u32, Lsb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U32, BitsOrderFormat::Lsb0));
-        assert_type::<BitVec<u64, Lsb0>>(ResolvedTypeInfo::BitSequence(BitsStoreFormat::U64, BitsOrderFormat::Lsb0));
+        assert_type::<BitVec<u8, Msb0>>(ResolvedTypeInfo::BitSequence(
+            BitsStoreFormat::U8,
+            BitsOrderFormat::Msb0,
+        ));
+        assert_type::<BitVec<u16, Msb0>>(ResolvedTypeInfo::BitSequence(
+            BitsStoreFormat::U16,
+            BitsOrderFormat::Msb0,
+        ));
+        assert_type::<BitVec<u32, Msb0>>(ResolvedTypeInfo::BitSequence(
+            BitsStoreFormat::U32,
+            BitsOrderFormat::Msb0,
+        ));
+        assert_type::<BitVec<u64, Msb0>>(ResolvedTypeInfo::BitSequence(
+            BitsStoreFormat::U64,
+            BitsOrderFormat::Msb0,
+        ));
+        assert_type::<BitVec<u8, Lsb0>>(ResolvedTypeInfo::BitSequence(
+            BitsStoreFormat::U8,
+            BitsOrderFormat::Lsb0,
+        ));
+        assert_type::<BitVec<u16, Lsb0>>(ResolvedTypeInfo::BitSequence(
+            BitsStoreFormat::U16,
+            BitsOrderFormat::Lsb0,
+        ));
+        assert_type::<BitVec<u32, Lsb0>>(ResolvedTypeInfo::BitSequence(
+            BitsStoreFormat::U32,
+            BitsOrderFormat::Lsb0,
+        ));
+        assert_type::<BitVec<u64, Lsb0>>(ResolvedTypeInfo::BitSequence(
+            BitsStoreFormat::U64,
+            BitsOrderFormat::Lsb0,
+        ));
     }
 }
