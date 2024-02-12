@@ -17,6 +17,7 @@ scale-info = ["dep:scale-info"]
 
 [dependencies]
 scale-info = { version = "2.7.0", default-features = false, optional = true }
+smallvec = { version = "1.10.0" }
 
 [dev-dependencies]
 bitvec = "1"
