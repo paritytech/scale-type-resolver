@@ -206,16 +206,59 @@ mod test {
     }
 
     fn to_resolved_info(type_id: &u32, types: &PortableRegistry) -> ResolvedTypeInfo {
-        match types.resolve_type(type_id, TestResolveVisitor(types)) {
+        use crate::visitor;
+
+        // Build a quick visitor which turns resolved type info
+        // into a concrete type for us to check.
+        let visitor = visitor::new((), |_,_| panic!("all methods implemented"))
+            .visit_not_found(|_| ResolvedTypeInfo::NotFound)
+            .visit_composite(|_,fields| {
+                let fs = fields
+                    .map(|f| {
+                        let inner_ty = to_resolved_info(f.id, types);
+                        (f.name.map(|n| n.to_owned()), inner_ty)
+                    })
+                    .collect();
+                ResolvedTypeInfo::CompositeOf(fs)
+            })
+            .visit_variant(|_,variants| {
+                let vs = variants
+                    .map(|v| {
+                        let fs: Vec<_> = v
+                            .fields
+                            .map(|f| {
+                                let inner_ty = to_resolved_info(f.id, types);
+                                (f.name.map(|n| n.to_owned()), inner_ty)
+                            })
+                            .collect();
+                        (v.name.to_owned(), fs)
+                    })
+                    .collect();
+                ResolvedTypeInfo::VariantOf(vs)
+            })
+            .visit_sequence(|_,type_id| {
+                ResolvedTypeInfo::SequenceOf(Box::new(to_resolved_info(type_id, types)))
+            })
+            .visit_array(|_,type_id, len| {
+                ResolvedTypeInfo::ArrayOf(Box::new(to_resolved_info(type_id, types)), len)
+            })
+            .visit_tuple(|_,type_ids| {
+                let ids = type_ids.map(|id| to_resolved_info(id, types)).collect();
+                ResolvedTypeInfo::TupleOf(ids)
+            })
+            .visit_primitive(|_,primitive| ResolvedTypeInfo::Primitive(primitive))
+            .visit_compact(|_,type_id| {
+                ResolvedTypeInfo::Compact(Box::new(to_resolved_info(type_id, types)))
+            })
+            .visit_bit_sequence(|_,store_format, order_format| {
+                ResolvedTypeInfo::BitSequence(store_format, order_format)
+            });
+
+        match types.resolve_type(type_id, visitor) {
             Err(e) => ResolvedTypeInfo::Err(e),
             Ok(info) => info,
         }
     }
-
-    /// A test resolve visitor which just reifies the type information
-    /// into [`ResolvedTypeInfo`] for easy testing.
-    #[derive(Copy, Clone)]
-    struct TestResolveVisitor<'resolver>(&'resolver PortableRegistry);
 
     #[allow(clippy::type_complexity)]
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -230,75 +273,6 @@ mod test {
         Primitive(Primitive),
         Compact(Box<ResolvedTypeInfo>),
         BitSequence(BitsStoreFormat, BitsOrderFormat),
-    }
-
-    impl<'resolver> ResolvedTypeVisitor<'resolver> for TestResolveVisitor<'resolver> {
-        type TypeId = u32;
-        type Value = ResolvedTypeInfo;
-
-        fn visit_unhandled(self, _kind: crate::UnhandledKind) -> Self::Value {
-            panic!("all methods implemented")
-        }
-        fn visit_not_found(self) -> Self::Value {
-            ResolvedTypeInfo::NotFound
-        }
-        fn visit_composite<Fields>(self, fields: Fields) -> Self::Value
-        where
-            Fields: crate::FieldIter<'resolver, Self::TypeId>,
-        {
-            let fs = fields
-                .map(|f| {
-                    let inner_ty = to_resolved_info(f.id, self.0);
-                    (f.name.map(|n| n.to_owned()), inner_ty)
-                })
-                .collect();
-            ResolvedTypeInfo::CompositeOf(fs)
-        }
-        fn visit_variant<Fields: 'resolver, Var>(self, variants: Var) -> Self::Value
-        where
-            Fields: crate::FieldIter<'resolver, Self::TypeId>,
-            Var: crate::VariantIter<'resolver, Fields>,
-        {
-            let vs = variants
-                .map(|v| {
-                    let fs: Vec<_> = v
-                        .fields
-                        .map(|f| {
-                            let inner_ty = to_resolved_info(f.id, self.0);
-                            (f.name.map(|n| n.to_owned()), inner_ty)
-                        })
-                        .collect();
-                    (v.name.to_owned(), fs)
-                })
-                .collect();
-            ResolvedTypeInfo::VariantOf(vs)
-        }
-        fn visit_sequence(self, type_id: &'resolver Self::TypeId) -> Self::Value {
-            ResolvedTypeInfo::SequenceOf(Box::new(to_resolved_info(type_id, self.0)))
-        }
-        fn visit_array(self, type_id: &'resolver Self::TypeId, len: usize) -> Self::Value {
-            ResolvedTypeInfo::ArrayOf(Box::new(to_resolved_info(type_id, self.0)), len)
-        }
-        fn visit_tuple<TypeIds>(self, type_ids: TypeIds) -> Self::Value
-        where
-            TypeIds: ExactSizeIterator<Item = &'resolver Self::TypeId>,
-        {
-            let ids = type_ids.map(|id| to_resolved_info(id, self.0)).collect();
-            ResolvedTypeInfo::TupleOf(ids)
-        }
-        fn visit_primitive(self, primitive: Primitive) -> Self::Value {
-            ResolvedTypeInfo::Primitive(primitive)
-        }
-        fn visit_compact(self, type_id: &'resolver Self::TypeId) -> Self::Value {
-            ResolvedTypeInfo::Compact(Box::new(to_resolved_info(type_id, self.0)))
-        }
-        fn visit_bit_sequence(
-            self,
-            store_format: BitsStoreFormat,
-            order_format: BitsOrderFormat,
-        ) -> Self::Value {
-            ResolvedTypeInfo::BitSequence(store_format, order_format)
-        }
     }
 
     #[test]

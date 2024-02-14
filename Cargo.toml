@@ -10,14 +10,17 @@ homepage = "https://www.parity.io/"
 keywords = ["parity", "scale", "decoding"]
 
 [features]
-default = ["scale-info"]
+default = ["scale-info", "visitor"]
 
 # Impl the TypeResolver trait on scale_info::PortableRegistry
 scale-info = ["dep:scale-info"]
 
+# Provide a concrete ResolveTypeVisitor impl (requires smallvec).
+visitor = ["dep:smallvec"]
+
 [dependencies]
 scale-info = { version = "2.7.0", default-features = false, optional = true }
-smallvec = { version = "1.10.0" }
+smallvec = { version = "1.10.0", optional = true }
 
 [dev-dependencies]
 bitvec = "1"
