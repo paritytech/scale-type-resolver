@@ -116,7 +116,7 @@ pub struct ConcreteResolvedTypeVisitor<
 /// The `visit_*` methods provided each take closures which have a similar type signature to the
 /// underlying trait methods on [`ResolvedTypeVisitor`], with small differences where necessary to
 /// avoid type and ownership issues. The first argument to every function is some arbitrary context
-/// which is provided as the first argument to [`scale_type_resolver::visitor::new()`].
+/// which is provided as the first argument to [`crate::visitor::new()`].
 ///
 /// Using this concrete visitor is expected to be almost as optimal as implementing the
 /// [`ResolvedTypeVisitor`] trait manually. One area where it makes a small sacrifice to this is in
