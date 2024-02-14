@@ -1,3 +1,19 @@
+// Copyright (C) 2024 Parity Technologies (UK) Ltd. (admin@parity.io)
+// This file is a part of the scale-decode crate.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//         http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+#![allow(clippy::type_complexity)]
+
 use crate::{
     BitsOrderFormat, BitsStoreFormat, Field, FieldIter, Primitive, ResolvedTypeVisitor,
     UnhandledKind, Variant, VariantIter,
@@ -68,9 +84,11 @@ pub struct ConcreteResolvedTypeVisitor<
 /// more details about like so:
 ///
 /// ```rust
+/// use scale_type_resolver::{ TypeResolver, ResolvedTypeVisitor };
+///
 /// // Some dummy type that we're saying can resolve types:
 /// struct MyTypeResolver;
-/// impl crate::TypeResolver for MyTypeResolver {
+/// impl TypeResolver for MyTypeResolver {
 ///     type TypeId = u32;
 ///     type Error = u8;
 ///     fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
@@ -85,9 +103,10 @@ pub struct ConcreteResolvedTypeVisitor<
 /// // Now, we can create a visitor using this `visitor::new` function.
 /// // This has specific handling for composite and variant types, falling
 /// // back to returning `1u64` if some other type was found.
-/// let visitor = scale_type_resolver::visitor::new(|_unhandled_kind| 1u64)
-///     .visit_composite(|_composite_fields| 2)
-///     .visit_primitive(|_primitive_type| 3);
+/// let context = ();
+/// let visitor = scale_type_resolver::visitor::new(context, |_context, _unhandled_kind| 1u64)
+///     .visit_composite(|_context, _composite_fields| 2)
+///     .visit_primitive(|_context, _primitive_type| 3);
 ///
 /// // By providing the visitor to a type resolver, the TypeId type can be
 /// // inferred (else it can be given on the `visitor::new` function).
@@ -96,7 +115,8 @@ pub struct ConcreteResolvedTypeVisitor<
 ///
 /// The `visit_*` methods provided each take closures which have a similar type signature to the
 /// underlying trait methods on [`ResolvedTypeVisitor`], with small differences where necessary to
-/// avoid type and ownership issues.
+/// avoid type and ownership issues. The first argument to every function is some arbitrary context
+/// which is provided as the first argument to [`scale_type_resolver::visitor::new()`].
 ///
 /// Using this concrete visitor is expected to be almost as optimal as implementing the
 /// [`ResolvedTypeVisitor`] trait manually. One area where it makes a small sacrifice to this is in
@@ -725,8 +745,8 @@ mod tests {
             .visit_not_found(|_| 6)
             .visit_tuple(|_, _| 8)
             .visit_variant(|_, _| 9);
-        //// We deliberately don't implement all methods to prove that
-        //// type inference works regardless:
+/// We deliberately don't implement all methods to prove that
+/// type inference works regardless:
         // .visit_primitive(|_,_| 7)
         // .visit_sequence(|_,_| 10);
 
