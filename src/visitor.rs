@@ -745,8 +745,8 @@ mod tests {
             .visit_not_found(|_| 6)
             .visit_tuple(|_, _| 8)
             .visit_variant(|_, _| 9);
-/// We deliberately don't implement all methods to prove that
-/// type inference works regardless:
+        // We deliberately don't implement all methods to prove that
+        // type inference works regardless:
         // .visit_primitive(|_,_| 7)
         // .visit_sequence(|_,_| 10);
 
