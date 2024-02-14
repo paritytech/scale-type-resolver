@@ -210,9 +210,9 @@ mod test {
 
         // Build a quick visitor which turns resolved type info
         // into a concrete type for us to check.
-        let visitor = visitor::new((), |_,_| panic!("all methods implemented"))
+        let visitor = visitor::new((), |_, _| panic!("all methods implemented"))
             .visit_not_found(|_| ResolvedTypeInfo::NotFound)
-            .visit_composite(|_,fields| {
+            .visit_composite(|_, fields| {
                 let fs = fields
                     .map(|f| {
                         let inner_ty = to_resolved_info(f.id, types);
@@ -221,7 +221,7 @@ mod test {
                     .collect();
                 ResolvedTypeInfo::CompositeOf(fs)
             })
-            .visit_variant(|_,variants| {
+            .visit_variant(|_, variants| {
                 let vs = variants
                     .map(|v| {
                         let fs: Vec<_> = v
@@ -236,21 +236,21 @@ mod test {
                     .collect();
                 ResolvedTypeInfo::VariantOf(vs)
             })
-            .visit_sequence(|_,type_id| {
+            .visit_sequence(|_, type_id| {
                 ResolvedTypeInfo::SequenceOf(Box::new(to_resolved_info(type_id, types)))
             })
-            .visit_array(|_,type_id, len| {
+            .visit_array(|_, type_id, len| {
                 ResolvedTypeInfo::ArrayOf(Box::new(to_resolved_info(type_id, types)), len)
             })
-            .visit_tuple(|_,type_ids| {
+            .visit_tuple(|_, type_ids| {
                 let ids = type_ids.map(|id| to_resolved_info(id, types)).collect();
                 ResolvedTypeInfo::TupleOf(ids)
             })
-            .visit_primitive(|_,primitive| ResolvedTypeInfo::Primitive(primitive))
-            .visit_compact(|_,type_id| {
+            .visit_primitive(|_, primitive| ResolvedTypeInfo::Primitive(primitive))
+            .visit_compact(|_, type_id| {
                 ResolvedTypeInfo::Compact(Box::new(to_resolved_info(type_id, types)))
             })
-            .visit_bit_sequence(|_,store_format, order_format| {
+            .visit_bit_sequence(|_, store_format, order_format| {
                 ResolvedTypeInfo::BitSequence(store_format, order_format)
             });
 
