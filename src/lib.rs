@@ -33,6 +33,12 @@ use core::iter::ExactSizeIterator;
 #[cfg(feature = "scale-info")]
 pub mod portable_registry;
 
+/// A concrete [`ResolvedTypeVisitor`] implementation that allows you to provide closures to
+/// configure it. Using this is often a lot easier than implementing [`ResolvedTypeVisitor`] yourself,
+/// but does require an additional dependency and may be a touch less performant.
+#[cfg(feature = "visitor")]
+pub mod visitor;
+
 /// This trait can be implemented for any type that is capable of describing how some type (identified
 /// by a [`TypeResolver::TypeId`]) is represented in terms of SCALE encoded bytes.
 ///
