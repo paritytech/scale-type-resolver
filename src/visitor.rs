@@ -104,8 +104,9 @@ pub struct ConcreteResolvedTypeVisitor<
 ///     .visit_composite(|_context, _composite_fields| 2)
 ///     .visit_primitive(|_context, _primitive_type| 3);
 ///
-/// // By providing the visitor to a type resolver, the TypeId type can be
-/// // inferred (else it can be given on the `visitor::new` function).
+/// // Now, when we provide the visitor to a type resolver, we'll get back a result
+/// // containing either the value returned from the matched `visit_*` call above, or
+/// // an error if the type resolver itself had an issue.
 /// MyTypeResolver.resolve_type(&123, visitor);
 /// ```
 ///
@@ -149,8 +150,9 @@ where
     let visit_unhandled = unhandled_fn.clone();
 
     // We explicitly define all of the other impls here so that the full concrete
-    // type of ConcreteResolvedTypeVisitor is known immediately. If we used `Option`s
-    // here instead, we'd struggle to resolve the concrete `T` in each `Option<T>`.
+    // type of ConcreteResolvedTypeVisitor is known immediately (albeit using unnameable
+    // types). If we used `Option`s here instead, we'd struggle to resolve the concrete
+    // `T` in each `Option<T>, and our goal is to have good type inference when using this.
     let visit_not_found = {
         let u = unhandled_fn.clone();
         move |ctx| u(ctx, UnhandledKind::NotFound)
