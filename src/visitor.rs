@@ -30,7 +30,7 @@ impl<'resolver, TypeId> Iterator for ConcreteFieldIter<'resolver, TypeId> {
     type Item = Field<'resolver, TypeId>;
     fn next(&mut self) -> Option<Self::Item> {
         let field = self.fields.get(self.idx)?;
-        self.idx +=1;
+        self.idx += 1;
         Some(*field)
     }
 }
