@@ -62,10 +62,9 @@ impl TypeResolver for PortableRegistry {
 
     fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
         &'this self,
-        type_id: &Self::TypeId,
+        type_id: Self::TypeId,
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
-        let type_id = *type_id;
         let Some(ty) = self.resolve(type_id) else {
             return Ok(visitor.visit_not_found());
         };
@@ -77,19 +76,19 @@ impl TypeResolver for PortableRegistry {
             scale_info::TypeDef::Variant(variant) => {
                 visitor.visit_variant(iter_variants(&variant.variants))
             }
-            scale_info::TypeDef::Sequence(seq) => visitor.visit_sequence(&seq.type_param.id),
+            scale_info::TypeDef::Sequence(seq) => visitor.visit_sequence(seq.type_param.id),
             scale_info::TypeDef::Array(arr) => {
-                visitor.visit_array(&arr.type_param.id, arr.len as usize)
+                visitor.visit_array(arr.type_param.id, arr.len as usize)
             }
             scale_info::TypeDef::Tuple(tuple) => {
-                let ids = tuple.fields.iter().map(|f| &f.id);
+                let ids = tuple.fields.iter().map(|f| f.id);
                 visitor.visit_tuple(ids)
             }
             scale_info::TypeDef::Primitive(prim) => {
                 let primitive = into_primitive(prim);
                 visitor.visit_primitive(primitive)
             }
-            scale_info::TypeDef::Compact(compact) => visitor.visit_compact(&compact.type_param.id),
+            scale_info::TypeDef::Compact(compact) => visitor.visit_compact(compact.type_param.id),
             scale_info::TypeDef::BitSequence(ty) => {
                 let (order, store) = bits_from_metadata(ty, self)?;
                 visitor.visit_bit_sequence(store, order)
@@ -135,7 +134,7 @@ fn iter_fields(
 ) -> impl ExactSizeIterator<Item = Field<'_, u32>> {
     fields.iter().map(|f| Field {
         name: f.name.as_deref(),
-        id: &f.ty.id,
+        id: f.ty.id,
     })
 }
 
@@ -201,11 +200,11 @@ mod test {
 
     fn assert_type<T: scale_info::TypeInfo + 'static>(info: ResolvedTypeInfo) {
         let (id, types) = make_type::<T>();
-        let resolved_info = to_resolved_info(&id, &types);
+        let resolved_info = to_resolved_info(id, &types);
         assert_eq!(info, resolved_info);
     }
 
-    fn to_resolved_info(type_id: &u32, types: &PortableRegistry) -> ResolvedTypeInfo {
+    fn to_resolved_info(type_id: u32, types: &PortableRegistry) -> ResolvedTypeInfo {
         use crate::visitor;
 
         // Build a quick visitor which turns resolved type info
@@ -302,6 +301,7 @@ mod test {
         ]));
 
         #[derive(scale_info::TypeInfo)]
+        #[allow(dead_code)]
         struct Unnamed(bool, u8);
 
         assert_type::<Unnamed>(ResolvedTypeInfo::CompositeOf(vec![

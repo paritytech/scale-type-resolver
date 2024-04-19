@@ -53,7 +53,7 @@ pub mod visitor;
 /// For an example implementation, see the code in the [`portable_registry`] module.
 pub trait TypeResolver {
     /// An identifier which points to some type that we'd like information on.
-    type TypeId: TypeId;
+    type TypeId: TypeId + 'static;
     /// An error that can be handed back in the process of trying to resolve a type.
     type Error: core::fmt::Debug + core::fmt::Display;
 
@@ -61,7 +61,7 @@ pub trait TypeResolver {
     /// outcome of resolving the SCALE encoding information.
     fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
         &'this self,
-        type_id: &Self::TypeId,
+        type_id: Self::TypeId,
         visitor: V,
     ) -> Result<V::Value, Self::Error>;
 }
@@ -74,7 +74,7 @@ pub trait TypeResolver {
 /// are thus bound by this lifetime, and it's possible to return values which contain this lifetime.
 pub trait ResolvedTypeVisitor<'resolver>: Sized {
     /// The type ID type that the [`TypeResolver`] is using.
-    type TypeId: TypeId + 'resolver;
+    type TypeId: TypeId + 'static;
     /// Some value that can be returned from the called method.
     type Value;
 
@@ -97,7 +97,7 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
 
     /// Called when the type ID corresponds to a variant type. This is provided the list of
     /// variants (and for each variant, the fields within it) that the type could be encoded as.
-    fn visit_variant<Fields: 'resolver, Var>(self, _variants: Var) -> Self::Value
+    fn visit_variant<Fields, Var>(self, _variants: Var) -> Self::Value
     where
         Fields: FieldIter<'resolver, Self::TypeId>,
         Var: VariantIter<'resolver, Fields>,
@@ -107,21 +107,21 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
 
     /// Called when the type ID corresponds to a sequence of values of some type ID (which is
     /// provided as an argument here). The length of the sequence is compact encoded first.
-    fn visit_sequence(self, _type_id: &'resolver Self::TypeId) -> Self::Value {
+    fn visit_sequence(self, _type_id: Self::TypeId) -> Self::Value {
         self.visit_unhandled(UnhandledKind::Sequence)
     }
 
     /// Called when the type ID corresponds to an array of values of some type ID (which is
     /// provided as an argument here). The length of the array is known at compile time and
     /// is also provided.
-    fn visit_array(self, _type_id: &'resolver Self::TypeId, _len: usize) -> Self::Value {
+    fn visit_array(self, _type_id: Self::TypeId, _len: usize) -> Self::Value {
         self.visit_unhandled(UnhandledKind::Array)
     }
 
     /// Called when the type ID corresponds to a tuple of values whose type IDs are provided here.
     fn visit_tuple<TypeIds>(self, _type_ids: TypeIds) -> Self::Value
     where
-        TypeIds: ExactSizeIterator<Item = &'resolver Self::TypeId>,
+        TypeIds: ExactSizeIterator<Item = Self::TypeId>,
     {
         self.visit_unhandled(UnhandledKind::Tuple)
     }
@@ -134,7 +134,7 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
 
     /// Called when the type ID corresponds to a compact encoded type. The type ID of the inner type
     /// is provided.
-    fn visit_compact(self, _type_id: &'resolver Self::TypeId) -> Self::Value {
+    fn visit_compact(self, _type_id: Self::TypeId) -> Self::Value {
         self.visit_unhandled(UnhandledKind::Compact)
     }
 
@@ -166,36 +166,36 @@ pub enum UnhandledKind {
 }
 
 /// A trait representing a type ID.
-pub trait TypeId: core::fmt::Debug + core::default::Default {}
-impl<T: core::fmt::Debug + core::default::Default> TypeId for T {}
+pub trait TypeId: Clone + core::fmt::Debug + core::default::Default {}
+impl<T: Clone + core::fmt::Debug + core::default::Default> TypeId for T {}
 
 /// Information about a composite field.
 #[derive(Debug)]
-pub struct Field<'resolver, TypeId: 'resolver> {
+pub struct Field<'resolver, TypeId> {
     /// The name of the field, or `None` if the field is unnamed.
     pub name: Option<&'resolver str>,
     /// The type ID corresponding to the value for this field.
-    pub id: &'resolver TypeId,
+    pub id: TypeId,
 }
 
-impl<'resolver, TypeId: 'resolver> Copy for Field<'resolver, TypeId> {}
-impl<'resolver, TypeId: 'resolver> Clone for Field<'resolver, TypeId> {
+impl<'resolver, TypeId: Copy> Copy for Field<'resolver, TypeId> {}
+impl<'resolver, TypeId: Clone> Clone for Field<'resolver, TypeId> {
     fn clone(&self) -> Self {
-        *self
+        Field { name: self.name, id: self.id.clone() }
     }
 }
 
 impl<'resolver, TypeId> Field<'resolver, TypeId> {
     /// Construct a new field with an ID and optional name.
-    pub fn new(id: &'resolver TypeId, name: Option<&'resolver str>) -> Self {
+    pub fn new(id: TypeId, name: Option<&'resolver str>) -> Self {
         Field { id, name }
     }
     /// Create a new unnamed field.
-    pub fn unnamed(id: &'resolver TypeId) -> Self {
+    pub fn unnamed(id: TypeId) -> Self {
         Field { name: None, id }
     }
     /// Create a new named field.
-    pub fn named(id: &'resolver TypeId, name: &'resolver str) -> Self {
+    pub fn named(id: TypeId, name: &'resolver str) -> Self {
         Field {
             name: Some(name),
             id,
@@ -205,7 +205,7 @@ impl<'resolver, TypeId> Field<'resolver, TypeId> {
 
 /// Information about a specific variant type.
 #[derive(Clone, Debug)]
-pub struct Variant<'resolver, Fields: 'resolver> {
+pub struct Variant<'resolver, Fields> {
     /// The variant index.
     pub index: u8,
     /// The variant name.
@@ -215,21 +215,21 @@ pub struct Variant<'resolver, Fields: 'resolver> {
 }
 
 /// An iterator over a set of fields.
-pub trait FieldIter<'resolver, TypeId: 'resolver>:
+pub trait FieldIter<'resolver, TypeId>:
     ExactSizeIterator<Item = Field<'resolver, TypeId>>
 {
 }
-impl<'resolver, TypeId: 'resolver, T> FieldIter<'resolver, TypeId> for T where
+impl<'resolver, TypeId, T> FieldIter<'resolver, TypeId> for T where
     T: ExactSizeIterator<Item = Field<'resolver, TypeId>>
 {
 }
 
 /// An iterator over a set of variants.
-pub trait VariantIter<'resolver, Fields: 'resolver>:
+pub trait VariantIter<'resolver, Fields>:
     ExactSizeIterator<Item = Variant<'resolver, Fields>>
 {
 }
-impl<'resolver, Fields: 'resolver, T> VariantIter<'resolver, Fields> for T where
+impl<'resolver, Fields, T> VariantIter<'resolver, Fields> for T where
     T: ExactSizeIterator<Item = Variant<'resolver, Fields>>
 {
 }
