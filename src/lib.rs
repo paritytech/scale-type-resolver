@@ -88,8 +88,9 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
 
     /// Called when the type ID corresponds to a composite type. This is provided an iterator
     /// over each of the fields and their type IDs that the composite type contains.
-    fn visit_composite<Fields>(self, _fields: Fields) -> Self::Value
+    fn visit_composite<'a, Path, Fields>(self, _path: Path, _fields: Fields) -> Self::Value
     where
+        Path: PathIter<'a>,
         Fields: FieldIter<'resolver, Self::TypeId>,
     {
         self.visit_unhandled(UnhandledKind::Composite)
@@ -97,8 +98,9 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
 
     /// Called when the type ID corresponds to a variant type. This is provided the list of
     /// variants (and for each variant, the fields within it) that the type could be encoded as.
-    fn visit_variant<Fields, Var>(self, _variants: Var) -> Self::Value
+    fn visit_variant<'a, Path, Fields, Var>(self, _path: Path, _variants: Var) -> Self::Value
     where
+        Path: PathIter<'a>,
         Fields: FieldIter<'resolver, Self::TypeId>,
         Var: VariantIter<'resolver, Fields>,
     {
@@ -107,7 +109,10 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
 
     /// Called when the type ID corresponds to a sequence of values of some type ID (which is
     /// provided as an argument here). The length of the sequence is compact encoded first.
-    fn visit_sequence(self, _type_id: Self::TypeId) -> Self::Value {
+    fn visit_sequence<'a, Path>(self, _path: Path, _type_id: Self::TypeId) -> Self::Value
+    where
+        Path: PathIter<'a>,
+    {
         self.visit_unhandled(UnhandledKind::Sequence)
     }
 
@@ -213,6 +218,10 @@ pub struct Variant<'resolver, Fields> {
     /// The fields contained within this variant.
     pub fields: Fields,
 }
+
+/// An iterator over the path parts.
+pub trait PathIter<'a>: Iterator<Item=&'a str> {}
+impl<'a, T> PathIter<'a> for T where T: Iterator<Item=&'a str> {}
 
 /// An iterator over a set of fields.
 pub trait FieldIter<'resolver, TypeId>:

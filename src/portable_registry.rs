@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use crate::{
-    BitsOrderFormat, BitsStoreFormat, Field, Primitive, ResolvedTypeVisitor, TypeResolver, Variant,
+    BitsOrderFormat, BitsStoreFormat, Field, Primitive, ResolvedTypeVisitor, TypeResolver, Variant
 };
 use core::iter::ExactSizeIterator;
 use scale_info::{form::PortableForm, PortableRegistry};
@@ -69,14 +69,16 @@ impl TypeResolver for PortableRegistry {
             return Ok(visitor.visit_not_found());
         };
 
+        let path_iter = ty.path.segments.iter().map(|s| s.as_ref());
+
         let val = match &ty.type_def {
             scale_info::TypeDef::Composite(composite) => {
-                visitor.visit_composite(iter_fields(&composite.fields))
+                visitor.visit_composite(path_iter, iter_fields(&composite.fields))
             }
             scale_info::TypeDef::Variant(variant) => {
-                visitor.visit_variant(iter_variants(&variant.variants))
+                visitor.visit_variant(path_iter, iter_variants(&variant.variants))
             }
-            scale_info::TypeDef::Sequence(seq) => visitor.visit_sequence(seq.type_param.id),
+            scale_info::TypeDef::Sequence(seq) => visitor.visit_sequence(path_iter, seq.type_param.id),
             scale_info::TypeDef::Array(arr) => {
                 visitor.visit_array(arr.type_param.id, arr.len as usize)
             }
@@ -89,8 +91,8 @@ impl TypeResolver for PortableRegistry {
                 visitor.visit_primitive(primitive)
             }
             scale_info::TypeDef::Compact(compact) => visitor.visit_compact(compact.type_param.id),
-            scale_info::TypeDef::BitSequence(ty) => {
-                let (order, store) = bits_from_metadata(ty, self)?;
+            scale_info::TypeDef::BitSequence(bitseq) => {
+                let (order, store) = bits_from_metadata(bitseq, self)?;
                 visitor.visit_bit_sequence(store, order)
             }
         };
@@ -211,7 +213,7 @@ mod test {
         // into a concrete type for us to check.
         let visitor = visitor::new((), |_, _| panic!("all methods implemented"))
             .visit_not_found(|_| ResolvedTypeInfo::NotFound)
-            .visit_composite(|_, fields| {
+            .visit_composite(|_, _, fields| {
                 let fs = fields
                     .map(|f| {
                         let inner_ty = to_resolved_info(f.id, types);
@@ -220,7 +222,7 @@ mod test {
                     .collect();
                 ResolvedTypeInfo::CompositeOf(fs)
             })
-            .visit_variant(|_, variants| {
+            .visit_variant(|_, _, variants| {
                 let vs = variants
                     .map(|v| {
                         let fs: Vec<_> = v
@@ -235,7 +237,7 @@ mod test {
                     .collect();
                 ResolvedTypeInfo::VariantOf(vs)
             })
-            .visit_sequence(|_, type_id| {
+            .visit_sequence(|_, _, type_id| {
                 ResolvedTypeInfo::SequenceOf(Box::new(to_resolved_info(type_id, types)))
             })
             .visit_array(|_, type_id, len| {

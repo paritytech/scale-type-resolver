@@ -16,7 +16,7 @@
 
 use crate::{
     BitsOrderFormat, BitsStoreFormat, Field, FieldIter, Primitive, ResolvedTypeVisitor,
-    UnhandledKind, Variant, VariantIter,
+    UnhandledKind, Variant, VariantIter, PathIter,
 };
 use smallvec::SmallVec;
 
@@ -135,14 +135,15 @@ pub fn new<'resolver, Context, TypeId, Output, NewUnhandledFn>(
     Output,
     NewUnhandledFn,
     impl FnOnce(Context) -> Output,
-    impl for<'a> FnOnce(Context, &'a mut dyn FieldIter<'resolver, TypeId>) -> Output,
-    impl for<'a> FnOnce(
+    impl FnOnce(Context, &mut dyn PathIter<'_>, &'_ mut dyn FieldIter<'resolver, TypeId>) -> Output,
+    impl FnOnce(
         Context,
-        &'a mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>,
+        &mut dyn PathIter<'_>,
+        &'_ mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>,
     ) -> Output,
-    impl FnOnce(Context, TypeId) -> Output,
+    impl FnOnce(Context, &mut dyn PathIter<'_>, TypeId) -> Output,
     impl FnOnce(Context, TypeId, usize) -> Output,
-    impl for<'a> FnOnce(Context, &'a mut dyn ExactSizeIterator<Item = TypeId>) -> Output,
+    impl FnOnce(Context, &'_ mut dyn ExactSizeIterator<Item = TypeId>) -> Output,
     impl FnOnce(Context, Primitive) -> Output,
     impl FnOnce(Context, TypeId) -> Output,
     impl FnOnce(Context, BitsStoreFormat, BitsOrderFormat) -> Output,
@@ -162,17 +163,17 @@ where
     };
     let visit_composite = {
         let u = unhandled_fn.clone();
-        move |ctx, _: &mut dyn FieldIter<'resolver, TypeId>| u(ctx, UnhandledKind::Composite)
+        move |ctx, _: &mut dyn PathIter<'_>, _: &mut dyn FieldIter<'resolver, TypeId>| u(ctx, UnhandledKind::Composite)
     };
     let visit_variant = {
         let u = unhandled_fn.clone();
-        move |ctx, _: &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>| {
+        move |ctx, _: &mut dyn PathIter<'_>, _: &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>| {
             u(ctx, UnhandledKind::Variant)
         }
     };
     let visit_sequence = {
         let u = unhandled_fn.clone();
-        move |ctx, _| u(ctx, UnhandledKind::Sequence)
+        move |ctx, _: &mut dyn PathIter<'_>, _| u(ctx, UnhandledKind::Sequence)
     };
     let visit_array = {
         let u = unhandled_fn.clone();
@@ -306,7 +307,7 @@ impl<
         BitSequenceFn,
     >
     where
-        NewCompositeFn: FnOnce(Context, &mut dyn FieldIter<'resolver, TypeId>) -> Output,
+        NewCompositeFn: FnOnce(Context, &mut dyn PathIter<'_>, &mut dyn FieldIter<'resolver, TypeId>) -> Output,
     {
         ConcreteResolvedTypeVisitor {
             _marker: core::marker::PhantomData,
@@ -347,6 +348,7 @@ impl<
     where
         NewVariantFn: FnOnce(
             Context,
+            &mut dyn PathIter<'_>,
             &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>,
         ) -> Output,
     {
@@ -387,7 +389,7 @@ impl<
         BitSequenceFn,
     >
     where
-        NewSequenceFn: FnOnce(Context, TypeId) -> Output,
+        NewSequenceFn: FnOnce(Context, &mut dyn PathIter<'_>, TypeId) -> Output,
         TypeId: 'resolver,
     {
         ConcreteResolvedTypeVisitor {
@@ -641,12 +643,13 @@ where
     TypeId: Clone + Default + core::fmt::Debug + 'static,
     UnhandledFn: FnOnce(Context, UnhandledKind) -> Output,
     NotFoundFn: FnOnce(Context) -> Output,
-    CompositeFn: FnOnce(Context, &mut dyn FieldIter<'resolver, TypeId>) -> Output,
+    CompositeFn: FnOnce(Context, &mut dyn PathIter<'_>, &mut dyn FieldIter<'resolver, TypeId>) -> Output,
     VariantFn: FnOnce(
         Context,
+        &mut dyn PathIter<'_>,
         &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>,
     ) -> Output,
-    SequenceFn: FnOnce(Context, TypeId) -> Output,
+    SequenceFn: FnOnce(Context, &mut dyn PathIter<'_>, TypeId) -> Output,
     ArrayFn: FnOnce(Context, TypeId, usize) -> Output,
     TupleFn: FnOnce(Context, &mut dyn ExactSizeIterator<Item = TypeId>) -> Output,
     PrimitiveFn: FnOnce(Context, Primitive) -> Output,
@@ -664,18 +667,21 @@ where
         (self.visit_not_found)(self.context)
     }
 
-    fn visit_composite<Fields>(self, mut fields: Fields) -> Self::Value
+    fn visit_composite<'a, Path, Fields>(self, mut path: Path, mut fields: Fields) -> Self::Value
     where
+        Path: PathIter<'a>,
         Fields: FieldIter<'resolver, Self::TypeId>,
     {
         (self.visit_composite)(
             self.context,
+            &mut path,
             &mut fields as &mut dyn FieldIter<'resolver, Self::TypeId>,
         )
     }
 
-    fn visit_variant<Fields, Var>(self, variants: Var) -> Self::Value
+    fn visit_variant<'a, Path, Fields, Var>(self, mut path: Path, variants: Var) -> Self::Value
     where
+        Path: PathIter<'a>,
         Fields: FieldIter<'resolver, Self::TypeId>,
         Var: VariantIter<'resolver, Fields>,
     {
@@ -691,11 +697,14 @@ where
             },
         });
 
-        (self.visit_variant)(self.context, &mut var_iter)
+        (self.visit_variant)(self.context, &mut path, &mut var_iter)
     }
 
-    fn visit_sequence(self, type_id: Self::TypeId) -> Self::Value {
-        (self.visit_sequence)(self.context, type_id)
+    fn visit_sequence<'a, Path>(self, mut path: Path, type_id: Self::TypeId) -> Self::Value
+    where
+        Path: PathIter<'a>,
+    {
+        (self.visit_sequence)(self.context, &mut path, type_id)
     }
 
     fn visit_array(self, type_id: Self::TypeId, len: usize) -> Self::Value {
@@ -740,12 +749,12 @@ mod tests {
     fn check_type_inference() {
         let visitor = new((), |_, _| 1u64)
             .visit_array(|_, _, _| 2)
-            .visit_composite(|_, _| 3)
+            .visit_composite(|_, _, _| 3)
             .visit_bit_sequence(|_, _, _| 4)
             .visit_compact(|_, _| 5)
             .visit_not_found(|_| 6)
             .visit_tuple(|_, _| 8)
-            .visit_variant(|_, _| 9);
+            .visit_variant(|_, _, _| 9);
         // We deliberately don't implement all methods to prove that
         // type inference works regardless:
         // .visit_primitive(|_,_| 7)
