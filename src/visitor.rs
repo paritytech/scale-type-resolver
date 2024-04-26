@@ -136,13 +136,17 @@ pub fn new<'resolver, Context, TypeId, Output, NewUnhandledFn>(
     Output,
     NewUnhandledFn,
     impl FnOnce(Context) -> Output,
-    impl FnOnce(Context, &mut dyn PathIter<'_>, &'_ mut dyn FieldIter<'resolver, TypeId>) -> Output,
     impl FnOnce(
         Context,
-        &mut dyn PathIter<'_>,
+        &mut dyn PathIter<'resolver>,
+        &'_ mut dyn FieldIter<'resolver, TypeId>,
+    ) -> Output,
+    impl FnOnce(
+        Context,
+        &mut dyn PathIter<'resolver>,
         &'_ mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>,
     ) -> Output,
-    impl FnOnce(Context, &mut dyn PathIter<'_>, TypeId) -> Output,
+    impl FnOnce(Context, &mut dyn PathIter<'resolver>, TypeId) -> Output,
     impl FnOnce(Context, TypeId, usize) -> Output,
     impl FnOnce(Context, &'_ mut dyn ExactSizeIterator<Item = TypeId>) -> Output,
     impl FnOnce(Context, Primitive) -> Output,
@@ -164,21 +168,21 @@ where
     };
     let visit_composite = {
         let u = unhandled_fn.clone();
-        move |ctx, _: &mut dyn PathIter<'_>, _: &mut dyn FieldIter<'resolver, TypeId>| {
+        move |ctx, _: &mut dyn PathIter<'resolver>, _: &mut dyn FieldIter<'resolver, TypeId>| {
             u(ctx, UnhandledKind::Composite)
         }
     };
     let visit_variant = {
         let u = unhandled_fn.clone();
         move |ctx,
-              _: &mut dyn PathIter<'_>,
+              _: &mut dyn PathIter<'resolver>,
               _: &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>| {
             u(ctx, UnhandledKind::Variant)
         }
     };
     let visit_sequence = {
         let u = unhandled_fn.clone();
-        move |ctx, _: &mut dyn PathIter<'_>, _| u(ctx, UnhandledKind::Sequence)
+        move |ctx, _: &mut dyn PathIter<'resolver>, _| u(ctx, UnhandledKind::Sequence)
     };
     let visit_array = {
         let u = unhandled_fn.clone();
@@ -310,8 +314,11 @@ impl<
         BitSequenceFn,
     >
     where
-        NewCompositeFn:
-            FnOnce(Context, &mut dyn PathIter<'_>, &mut dyn FieldIter<'resolver, TypeId>) -> Output,
+        NewCompositeFn: FnOnce(
+            Context,
+            &mut dyn PathIter<'resolver>,
+            &mut dyn FieldIter<'resolver, TypeId>,
+        ) -> Output,
     {
         ConcreteResolvedTypeVisitor {
             _marker: core::marker::PhantomData,
@@ -352,7 +359,7 @@ impl<
     where
         NewVariantFn: FnOnce(
             Context,
-            &mut dyn PathIter<'_>,
+            &mut dyn PathIter<'resolver>,
             &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>,
         ) -> Output,
     {
@@ -393,7 +400,7 @@ impl<
         BitSequenceFn,
     >
     where
-        NewSequenceFn: FnOnce(Context, &mut dyn PathIter<'_>, TypeId) -> Output,
+        NewSequenceFn: FnOnce(Context, &mut dyn PathIter<'resolver>, TypeId) -> Output,
         TypeId: 'resolver,
     {
         ConcreteResolvedTypeVisitor {
@@ -647,14 +654,17 @@ where
     TypeId: Clone + Default + core::fmt::Debug + 'static,
     UnhandledFn: FnOnce(Context, UnhandledKind) -> Output,
     NotFoundFn: FnOnce(Context) -> Output,
-    CompositeFn:
-        FnOnce(Context, &mut dyn PathIter<'_>, &mut dyn FieldIter<'resolver, TypeId>) -> Output,
+    CompositeFn: FnOnce(
+        Context,
+        &mut dyn PathIter<'resolver>,
+        &mut dyn FieldIter<'resolver, TypeId>,
+    ) -> Output,
     VariantFn: FnOnce(
         Context,
-        &mut dyn PathIter<'_>,
+        &mut dyn PathIter<'resolver>,
         &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>,
     ) -> Output,
-    SequenceFn: FnOnce(Context, &mut dyn PathIter<'_>, TypeId) -> Output,
+    SequenceFn: FnOnce(Context, &mut dyn PathIter<'resolver>, TypeId) -> Output,
     ArrayFn: FnOnce(Context, TypeId, usize) -> Output,
     TupleFn: FnOnce(Context, &mut dyn ExactSizeIterator<Item = TypeId>) -> Output,
     PrimitiveFn: FnOnce(Context, Primitive) -> Output,
