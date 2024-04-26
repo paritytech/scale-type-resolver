@@ -14,7 +14,7 @@
 // limitations under the License.
 
 use crate::{
-    BitsOrderFormat, BitsStoreFormat, Field, Primitive, ResolvedTypeVisitor, TypeResolver, Variant
+    BitsOrderFormat, BitsStoreFormat, Field, Primitive, ResolvedTypeVisitor, TypeResolver, Variant,
 };
 use core::iter::ExactSizeIterator;
 use scale_info::{form::PortableForm, PortableRegistry};
@@ -78,7 +78,9 @@ impl TypeResolver for PortableRegistry {
             scale_info::TypeDef::Variant(variant) => {
                 visitor.visit_variant(path_iter, iter_variants(&variant.variants))
             }
-            scale_info::TypeDef::Sequence(seq) => visitor.visit_sequence(path_iter, seq.type_param.id),
+            scale_info::TypeDef::Sequence(seq) => {
+                visitor.visit_sequence(path_iter, seq.type_param.id)
+            }
             scale_info::TypeDef::Array(arr) => {
                 visitor.visit_array(arr.type_param.id, arr.len as usize)
             }

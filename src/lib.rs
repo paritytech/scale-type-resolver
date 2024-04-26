@@ -88,9 +88,9 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
 
     /// Called when the type ID corresponds to a composite type. This is provided an iterator
     /// over each of the fields and their type IDs that the composite type contains.
-    fn visit_composite<'a, Path, Fields>(self, _path: Path, _fields: Fields) -> Self::Value
+    fn visit_composite<Path, Fields>(self, _path: Path, _fields: Fields) -> Self::Value
     where
-        Path: PathIter<'a>,
+        Path: PathIter<'resolver>,
         Fields: FieldIter<'resolver, Self::TypeId>,
     {
         self.visit_unhandled(UnhandledKind::Composite)
@@ -98,9 +98,9 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
 
     /// Called when the type ID corresponds to a variant type. This is provided the list of
     /// variants (and for each variant, the fields within it) that the type could be encoded as.
-    fn visit_variant<'a, Path, Fields, Var>(self, _path: Path, _variants: Var) -> Self::Value
+    fn visit_variant<Path, Fields, Var>(self, _path: Path, _variants: Var) -> Self::Value
     where
-        Path: PathIter<'a>,
+        Path: PathIter<'resolver>,
         Fields: FieldIter<'resolver, Self::TypeId>,
         Var: VariantIter<'resolver, Fields>,
     {
@@ -109,9 +109,9 @@ pub trait ResolvedTypeVisitor<'resolver>: Sized {
 
     /// Called when the type ID corresponds to a sequence of values of some type ID (which is
     /// provided as an argument here). The length of the sequence is compact encoded first.
-    fn visit_sequence<'a, Path>(self, _path: Path, _type_id: Self::TypeId) -> Self::Value
+    fn visit_sequence<Path>(self, _path: Path, _type_id: Self::TypeId) -> Self::Value
     where
-        Path: PathIter<'a>,
+        Path: PathIter<'resolver>,
     {
         self.visit_unhandled(UnhandledKind::Sequence)
     }
@@ -186,7 +186,10 @@ pub struct Field<'resolver, TypeId> {
 impl<'resolver, TypeId: Copy> Copy for Field<'resolver, TypeId> {}
 impl<'resolver, TypeId: Clone> Clone for Field<'resolver, TypeId> {
     fn clone(&self) -> Self {
-        Field { name: self.name, id: self.id.clone() }
+        Field {
+            name: self.name,
+            id: self.id.clone(),
+        }
     }
 }
 
@@ -220,14 +223,11 @@ pub struct Variant<'resolver, Fields> {
 }
 
 /// An iterator over the path parts.
-pub trait PathIter<'a>: Iterator<Item=&'a str> {}
-impl<'a, T> PathIter<'a> for T where T: Iterator<Item=&'a str> {}
+pub trait PathIter<'resolver>: Iterator<Item = &'resolver str> {}
+impl<'resolver, T> PathIter<'resolver> for T where T: Iterator<Item = &'resolver str> {}
 
 /// An iterator over a set of fields.
-pub trait FieldIter<'resolver, TypeId>:
-    ExactSizeIterator<Item = Field<'resolver, TypeId>>
-{
-}
+pub trait FieldIter<'resolver, TypeId>: ExactSizeIterator<Item = Field<'resolver, TypeId>> {}
 impl<'resolver, TypeId, T> FieldIter<'resolver, TypeId> for T where
     T: ExactSizeIterator<Item = Field<'resolver, TypeId>>
 {

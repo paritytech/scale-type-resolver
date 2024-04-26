@@ -15,8 +15,8 @@
 #![allow(clippy::type_complexity)]
 
 use crate::{
-    BitsOrderFormat, BitsStoreFormat, Field, FieldIter, Primitive, ResolvedTypeVisitor,
-    UnhandledKind, Variant, VariantIter, PathIter,
+    BitsOrderFormat, BitsStoreFormat, Field, FieldIter, PathIter, Primitive, ResolvedTypeVisitor,
+    UnhandledKind, Variant, VariantIter,
 };
 use smallvec::SmallVec;
 
@@ -29,7 +29,8 @@ pub struct ConcreteFieldIter<'resolver, TypeId> {
 impl<'resolver, TypeId> Iterator for ConcreteFieldIter<'resolver, TypeId> {
     type Item = Field<'resolver, TypeId>;
     fn next(&mut self) -> Option<Self::Item> {
-        let field = self.fields
+        let field = self
+            .fields
             .get_mut(self.idx)?
             .take()
             .expect("Expected a field but got None");
@@ -92,7 +93,7 @@ pub struct ConcreteResolvedTypeVisitor<
 ///     type Error = u8;
 ///     fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
 ///         &'this self,
-///         type_id: &Self::TypeId,
+///         type_id: Self::TypeId,
 ///         visitor: V,
 ///     ) -> Result<V::Value, Self::Error> {
 ///         Ok(visitor.visit_not_found())
@@ -104,13 +105,13 @@ pub struct ConcreteResolvedTypeVisitor<
 /// // back to returning `1u64` if some other type was found.
 /// let context = ();
 /// let visitor = scale_type_resolver::visitor::new(context, |_context, _unhandled_kind| 1u64)
-///     .visit_composite(|_context, _composite_fields| 2)
+///     .visit_composite(|_context, _composite_path, _composite_fields| 2)
 ///     .visit_primitive(|_context, _primitive_type| 3);
 ///
 /// // Now, when we provide the visitor to a type resolver, we'll get back a result
 /// // containing either the value returned from the matched `visit_*` call above, or
 /// // an error if the type resolver itself had an issue.
-/// MyTypeResolver.resolve_type(&123, visitor);
+/// MyTypeResolver.resolve_type(123, visitor);
 /// ```
 ///
 /// The `visit_*` methods provided each take closures which have a similar type signature to the
@@ -163,11 +164,15 @@ where
     };
     let visit_composite = {
         let u = unhandled_fn.clone();
-        move |ctx, _: &mut dyn PathIter<'_>, _: &mut dyn FieldIter<'resolver, TypeId>| u(ctx, UnhandledKind::Composite)
+        move |ctx, _: &mut dyn PathIter<'_>, _: &mut dyn FieldIter<'resolver, TypeId>| {
+            u(ctx, UnhandledKind::Composite)
+        }
     };
     let visit_variant = {
         let u = unhandled_fn.clone();
-        move |ctx, _: &mut dyn PathIter<'_>, _: &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>| {
+        move |ctx,
+              _: &mut dyn PathIter<'_>,
+              _: &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>| {
             u(ctx, UnhandledKind::Variant)
         }
     };
@@ -181,9 +186,7 @@ where
     };
     let visit_tuple = {
         let u = unhandled_fn.clone();
-        move |ctx, _: &mut dyn ExactSizeIterator<Item = TypeId>| {
-            u(ctx, UnhandledKind::Tuple)
-        }
+        move |ctx, _: &mut dyn ExactSizeIterator<Item = TypeId>| u(ctx, UnhandledKind::Tuple)
     };
     let visit_primitive = {
         let u = unhandled_fn.clone();
@@ -307,7 +310,8 @@ impl<
         BitSequenceFn,
     >
     where
-        NewCompositeFn: FnOnce(Context, &mut dyn PathIter<'_>, &mut dyn FieldIter<'resolver, TypeId>) -> Output,
+        NewCompositeFn:
+            FnOnce(Context, &mut dyn PathIter<'_>, &mut dyn FieldIter<'resolver, TypeId>) -> Output,
     {
         ConcreteResolvedTypeVisitor {
             _marker: core::marker::PhantomData,
@@ -643,7 +647,8 @@ where
     TypeId: Clone + Default + core::fmt::Debug + 'static,
     UnhandledFn: FnOnce(Context, UnhandledKind) -> Output,
     NotFoundFn: FnOnce(Context) -> Output,
-    CompositeFn: FnOnce(Context, &mut dyn PathIter<'_>, &mut dyn FieldIter<'resolver, TypeId>) -> Output,
+    CompositeFn:
+        FnOnce(Context, &mut dyn PathIter<'_>, &mut dyn FieldIter<'resolver, TypeId>) -> Output,
     VariantFn: FnOnce(
         Context,
         &mut dyn PathIter<'_>,
@@ -667,9 +672,9 @@ where
         (self.visit_not_found)(self.context)
     }
 
-    fn visit_composite<'a, Path, Fields>(self, mut path: Path, mut fields: Fields) -> Self::Value
+    fn visit_composite<Path, Fields>(self, mut path: Path, mut fields: Fields) -> Self::Value
     where
-        Path: PathIter<'a>,
+        Path: PathIter<'resolver>,
         Fields: FieldIter<'resolver, Self::TypeId>,
     {
         (self.visit_composite)(
@@ -679,9 +684,9 @@ where
         )
     }
 
-    fn visit_variant<'a, Path, Fields, Var>(self, mut path: Path, variants: Var) -> Self::Value
+    fn visit_variant<Path, Fields, Var>(self, mut path: Path, variants: Var) -> Self::Value
     where
-        Path: PathIter<'a>,
+        Path: PathIter<'resolver>,
         Fields: FieldIter<'resolver, Self::TypeId>,
         Var: VariantIter<'resolver, Fields>,
     {
@@ -700,9 +705,9 @@ where
         (self.visit_variant)(self.context, &mut path, &mut var_iter)
     }
 
-    fn visit_sequence<'a, Path>(self, mut path: Path, type_id: Self::TypeId) -> Self::Value
+    fn visit_sequence<Path>(self, mut path: Path, type_id: Self::TypeId) -> Self::Value
     where
-        Path: PathIter<'a>,
+        Path: PathIter<'resolver>,
     {
         (self.visit_sequence)(self.context, &mut path, type_id)
     }
