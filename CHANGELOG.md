@@ -1,3 +1,10 @@
+# 0.2.0
+
+- Provide a `path` iterator to composite, variant and sequence callbacks in `ResolveTypeVisitor`, so that people can access the path/name of these types. The path is also exposed in the concrete visitor implementation.
+- Make `TypeId` be passed by value and not lifetime. This is done because:
+  1. `scale-info` uses a `TypeId = u32`, so it does not matter either way, and
+  2. `scale-info-legacy` uses `TypeId = TypeName`, and needs to modify the `TypeName`s provided back in some cases, making pass-by-reference impossible.
+
 # 0.1.1
 
 Just a patch release to make a small addition and no API changes:
