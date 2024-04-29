@@ -15,23 +15,27 @@
 #![allow(clippy::type_complexity)]
 
 use crate::{
-    BitsOrderFormat, BitsStoreFormat, Field, FieldIter, Primitive, ResolvedTypeVisitor,
+    BitsOrderFormat, BitsStoreFormat, Field, FieldIter, PathIter, Primitive, ResolvedTypeVisitor,
     UnhandledKind, Variant, VariantIter,
 };
 use smallvec::SmallVec;
 
 /// A concrete iterator over struct or variant fields information.
 pub struct ConcreteFieldIter<'resolver, TypeId> {
-    fields: SmallVec<[Field<'resolver, TypeId>; 16]>,
+    fields: SmallVec<[Option<Field<'resolver, TypeId>>; 16]>,
     idx: usize,
 }
 
 impl<'resolver, TypeId> Iterator for ConcreteFieldIter<'resolver, TypeId> {
     type Item = Field<'resolver, TypeId>;
     fn next(&mut self) -> Option<Self::Item> {
-        let field = self.fields.get(self.idx)?;
+        let field = self
+            .fields
+            .get_mut(self.idx)?
+            .take()
+            .expect("Expected a field but got None");
         self.idx += 1;
-        Some(*field)
+        Some(field)
     }
 }
 
@@ -89,7 +93,7 @@ pub struct ConcreteResolvedTypeVisitor<
 ///     type Error = u8;
 ///     fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
 ///         &'this self,
-///         type_id: &Self::TypeId,
+///         type_id: Self::TypeId,
 ///         visitor: V,
 ///     ) -> Result<V::Value, Self::Error> {
 ///         Ok(visitor.visit_not_found())
@@ -101,13 +105,13 @@ pub struct ConcreteResolvedTypeVisitor<
 /// // back to returning `1u64` if some other type was found.
 /// let context = ();
 /// let visitor = scale_type_resolver::visitor::new(context, |_context, _unhandled_kind| 1u64)
-///     .visit_composite(|_context, _composite_fields| 2)
+///     .visit_composite(|_context, _composite_path, _composite_fields| 2)
 ///     .visit_primitive(|_context, _primitive_type| 3);
 ///
 /// // Now, when we provide the visitor to a type resolver, we'll get back a result
 /// // containing either the value returned from the matched `visit_*` call above, or
 /// // an error if the type resolver itself had an issue.
-/// MyTypeResolver.resolve_type(&123, visitor);
+/// MyTypeResolver.resolve_type(123, visitor);
 /// ```
 ///
 /// The `visit_*` methods provided each take closures which have a similar type signature to the
@@ -132,16 +136,21 @@ pub fn new<'resolver, Context, TypeId, Output, NewUnhandledFn>(
     Output,
     NewUnhandledFn,
     impl FnOnce(Context) -> Output,
-    impl for<'a> FnOnce(Context, &'a mut dyn FieldIter<'resolver, TypeId>) -> Output,
-    impl for<'a> FnOnce(
+    impl FnOnce(
         Context,
-        &'a mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>,
+        &mut dyn PathIter<'resolver>,
+        &'_ mut dyn FieldIter<'resolver, TypeId>,
     ) -> Output,
-    impl FnOnce(Context, &'resolver TypeId) -> Output,
-    impl FnOnce(Context, &'resolver TypeId, usize) -> Output,
-    impl for<'a> FnOnce(Context, &'a mut dyn ExactSizeIterator<Item = &'resolver TypeId>) -> Output,
+    impl FnOnce(
+        Context,
+        &mut dyn PathIter<'resolver>,
+        &'_ mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>,
+    ) -> Output,
+    impl FnOnce(Context, &mut dyn PathIter<'resolver>, TypeId) -> Output,
+    impl FnOnce(Context, TypeId, usize) -> Output,
+    impl FnOnce(Context, &'_ mut dyn ExactSizeIterator<Item = TypeId>) -> Output,
     impl FnOnce(Context, Primitive) -> Output,
-    impl FnOnce(Context, &'resolver TypeId) -> Output,
+    impl FnOnce(Context, TypeId) -> Output,
     impl FnOnce(Context, BitsStoreFormat, BitsOrderFormat) -> Output,
 >
 where
@@ -159,17 +168,21 @@ where
     };
     let visit_composite = {
         let u = unhandled_fn.clone();
-        move |ctx, _: &mut dyn FieldIter<'resolver, TypeId>| u(ctx, UnhandledKind::Composite)
+        move |ctx, _: &mut dyn PathIter<'resolver>, _: &mut dyn FieldIter<'resolver, TypeId>| {
+            u(ctx, UnhandledKind::Composite)
+        }
     };
     let visit_variant = {
         let u = unhandled_fn.clone();
-        move |ctx, _: &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>| {
+        move |ctx,
+              _: &mut dyn PathIter<'resolver>,
+              _: &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>| {
             u(ctx, UnhandledKind::Variant)
         }
     };
     let visit_sequence = {
         let u = unhandled_fn.clone();
-        move |ctx, _| u(ctx, UnhandledKind::Sequence)
+        move |ctx, _: &mut dyn PathIter<'resolver>, _| u(ctx, UnhandledKind::Sequence)
     };
     let visit_array = {
         let u = unhandled_fn.clone();
@@ -177,9 +190,7 @@ where
     };
     let visit_tuple = {
         let u = unhandled_fn.clone();
-        move |ctx, _: &mut dyn ExactSizeIterator<Item = &'resolver TypeId>| {
-            u(ctx, UnhandledKind::Tuple)
-        }
+        move |ctx, _: &mut dyn ExactSizeIterator<Item = TypeId>| u(ctx, UnhandledKind::Tuple)
     };
     let visit_primitive = {
         let u = unhandled_fn.clone();
@@ -303,7 +314,11 @@ impl<
         BitSequenceFn,
     >
     where
-        NewCompositeFn: FnOnce(Context, &mut dyn FieldIter<'resolver, TypeId>) -> Output,
+        NewCompositeFn: FnOnce(
+            Context,
+            &mut dyn PathIter<'resolver>,
+            &mut dyn FieldIter<'resolver, TypeId>,
+        ) -> Output,
     {
         ConcreteResolvedTypeVisitor {
             _marker: core::marker::PhantomData,
@@ -344,6 +359,7 @@ impl<
     where
         NewVariantFn: FnOnce(
             Context,
+            &mut dyn PathIter<'resolver>,
             &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>,
         ) -> Output,
     {
@@ -384,7 +400,7 @@ impl<
         BitSequenceFn,
     >
     where
-        NewSequenceFn: FnOnce(Context, &'resolver TypeId) -> Output,
+        NewSequenceFn: FnOnce(Context, &mut dyn PathIter<'resolver>, TypeId) -> Output,
         TypeId: 'resolver,
     {
         ConcreteResolvedTypeVisitor {
@@ -424,7 +440,7 @@ impl<
         BitSequenceFn,
     >
     where
-        NewArrayFn: FnOnce(Context, &'resolver TypeId, usize) -> Output,
+        NewArrayFn: FnOnce(Context, TypeId, usize) -> Output,
         TypeId: 'resolver,
     {
         ConcreteResolvedTypeVisitor {
@@ -464,7 +480,7 @@ impl<
         BitSequenceFn,
     >
     where
-        NewTupleFn: FnOnce(Context, &mut dyn ExactSizeIterator<Item = &'resolver TypeId>) -> Output,
+        NewTupleFn: FnOnce(Context, &mut dyn ExactSizeIterator<Item = TypeId>) -> Output,
     {
         ConcreteResolvedTypeVisitor {
             _marker: core::marker::PhantomData,
@@ -542,7 +558,7 @@ impl<
         BitSequenceFn,
     >
     where
-        NewCompactFn: FnOnce(Context, &'resolver TypeId) -> Output,
+        NewCompactFn: FnOnce(Context, TypeId) -> Output,
         TypeId: 'resolver,
     {
         ConcreteResolvedTypeVisitor {
@@ -635,19 +651,24 @@ impl<
         BitSequenceFn,
     >
 where
-    TypeId: Default + core::fmt::Debug + 'resolver,
+    TypeId: Clone + Default + core::fmt::Debug + 'static,
     UnhandledFn: FnOnce(Context, UnhandledKind) -> Output,
     NotFoundFn: FnOnce(Context) -> Output,
-    CompositeFn: FnOnce(Context, &mut dyn FieldIter<'resolver, TypeId>) -> Output,
+    CompositeFn: FnOnce(
+        Context,
+        &mut dyn PathIter<'resolver>,
+        &mut dyn FieldIter<'resolver, TypeId>,
+    ) -> Output,
     VariantFn: FnOnce(
         Context,
+        &mut dyn PathIter<'resolver>,
         &mut dyn VariantIter<'resolver, ConcreteFieldIter<'resolver, TypeId>>,
     ) -> Output,
-    SequenceFn: FnOnce(Context, &'resolver TypeId) -> Output,
-    ArrayFn: FnOnce(Context, &'resolver TypeId, usize) -> Output,
-    TupleFn: FnOnce(Context, &mut dyn ExactSizeIterator<Item = &'resolver TypeId>) -> Output,
+    SequenceFn: FnOnce(Context, &mut dyn PathIter<'resolver>, TypeId) -> Output,
+    ArrayFn: FnOnce(Context, TypeId, usize) -> Output,
+    TupleFn: FnOnce(Context, &mut dyn ExactSizeIterator<Item = TypeId>) -> Output,
     PrimitiveFn: FnOnce(Context, Primitive) -> Output,
-    CompactFn: FnOnce(Context, &'resolver TypeId) -> Output,
+    CompactFn: FnOnce(Context, TypeId) -> Output,
     BitSequenceFn: FnOnce(Context, BitsStoreFormat, BitsOrderFormat) -> Output,
 {
     type TypeId = TypeId;
@@ -661,18 +682,21 @@ where
         (self.visit_not_found)(self.context)
     }
 
-    fn visit_composite<Fields>(self, mut fields: Fields) -> Self::Value
+    fn visit_composite<Path, Fields>(self, mut path: Path, mut fields: Fields) -> Self::Value
     where
+        Path: PathIter<'resolver>,
         Fields: FieldIter<'resolver, Self::TypeId>,
     {
         (self.visit_composite)(
             self.context,
+            &mut path,
             &mut fields as &mut dyn FieldIter<'resolver, Self::TypeId>,
         )
     }
 
-    fn visit_variant<Fields: 'resolver, Var>(self, variants: Var) -> Self::Value
+    fn visit_variant<Path, Fields, Var>(self, mut path: Path, variants: Var) -> Self::Value
     where
+        Path: PathIter<'resolver>,
         Fields: FieldIter<'resolver, Self::TypeId>,
         Var: VariantIter<'resolver, Fields>,
     {
@@ -683,29 +707,32 @@ where
             index: v.index,
             name: v.name,
             fields: ConcreteFieldIter {
-                fields: v.fields.collect(),
+                fields: v.fields.map(Some).collect(),
                 idx: 0,
             },
         });
 
-        (self.visit_variant)(self.context, &mut var_iter)
+        (self.visit_variant)(self.context, &mut path, &mut var_iter)
     }
 
-    fn visit_sequence(self, type_id: &'resolver Self::TypeId) -> Self::Value {
-        (self.visit_sequence)(self.context, type_id)
+    fn visit_sequence<Path>(self, mut path: Path, type_id: Self::TypeId) -> Self::Value
+    where
+        Path: PathIter<'resolver>,
+    {
+        (self.visit_sequence)(self.context, &mut path, type_id)
     }
 
-    fn visit_array(self, type_id: &'resolver Self::TypeId, len: usize) -> Self::Value {
+    fn visit_array(self, type_id: Self::TypeId, len: usize) -> Self::Value {
         (self.visit_array)(self.context, type_id, len)
     }
 
     fn visit_tuple<TypeIds>(self, mut type_ids: TypeIds) -> Self::Value
     where
-        TypeIds: ExactSizeIterator<Item = &'resolver Self::TypeId>,
+        TypeIds: ExactSizeIterator<Item = Self::TypeId>,
     {
         (self.visit_tuple)(
             self.context,
-            &mut type_ids as &mut dyn ExactSizeIterator<Item = &'resolver Self::TypeId>,
+            &mut type_ids as &mut dyn ExactSizeIterator<Item = Self::TypeId>,
         )
     }
 
@@ -713,7 +740,7 @@ where
         (self.visit_primitive)(self.context, primitive)
     }
 
-    fn visit_compact(self, type_id: &'resolver Self::TypeId) -> Self::Value {
+    fn visit_compact(self, type_id: Self::TypeId) -> Self::Value {
         (self.visit_compact)(self.context, type_id)
     }
 
@@ -737,12 +764,12 @@ mod tests {
     fn check_type_inference() {
         let visitor = new((), |_, _| 1u64)
             .visit_array(|_, _, _| 2)
-            .visit_composite(|_, _| 3)
+            .visit_composite(|_, _, _| 3)
             .visit_bit_sequence(|_, _, _| 4)
             .visit_compact(|_, _| 5)
             .visit_not_found(|_| 6)
             .visit_tuple(|_, _| 8)
-            .visit_variant(|_, _| 9);
+            .visit_variant(|_, _, _| 9);
         // We deliberately don't implement all methods to prove that
         // type inference works regardless:
         // .visit_primitive(|_,_| 7)
@@ -755,13 +782,13 @@ mod tests {
 
             fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
                 &'this self,
-                _type_id: &Self::TypeId,
+                _type_id: Self::TypeId,
                 visitor: V,
             ) -> Result<V::Value, Self::Error> {
                 Ok(visitor.visit_not_found())
             }
         }
 
-        assert_eq!(Foo.resolve_type(&123, visitor).unwrap(), 6);
+        assert_eq!(Foo.resolve_type(123, visitor).unwrap(), 6);
     }
 }

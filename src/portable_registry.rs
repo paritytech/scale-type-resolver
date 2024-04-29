@@ -62,36 +62,39 @@ impl TypeResolver for PortableRegistry {
 
     fn resolve_type<'this, V: ResolvedTypeVisitor<'this, TypeId = Self::TypeId>>(
         &'this self,
-        type_id: &Self::TypeId,
+        type_id: Self::TypeId,
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
-        let type_id = *type_id;
         let Some(ty) = self.resolve(type_id) else {
             return Ok(visitor.visit_not_found());
         };
 
+        let path_iter = ty.path.segments.iter().map(|s| s.as_ref());
+
         let val = match &ty.type_def {
             scale_info::TypeDef::Composite(composite) => {
-                visitor.visit_composite(iter_fields(&composite.fields))
+                visitor.visit_composite(path_iter, iter_fields(&composite.fields))
             }
             scale_info::TypeDef::Variant(variant) => {
-                visitor.visit_variant(iter_variants(&variant.variants))
+                visitor.visit_variant(path_iter, iter_variants(&variant.variants))
             }
-            scale_info::TypeDef::Sequence(seq) => visitor.visit_sequence(&seq.type_param.id),
+            scale_info::TypeDef::Sequence(seq) => {
+                visitor.visit_sequence(path_iter, seq.type_param.id)
+            }
             scale_info::TypeDef::Array(arr) => {
-                visitor.visit_array(&arr.type_param.id, arr.len as usize)
+                visitor.visit_array(arr.type_param.id, arr.len as usize)
             }
             scale_info::TypeDef::Tuple(tuple) => {
-                let ids = tuple.fields.iter().map(|f| &f.id);
+                let ids = tuple.fields.iter().map(|f| f.id);
                 visitor.visit_tuple(ids)
             }
             scale_info::TypeDef::Primitive(prim) => {
                 let primitive = into_primitive(prim);
                 visitor.visit_primitive(primitive)
             }
-            scale_info::TypeDef::Compact(compact) => visitor.visit_compact(&compact.type_param.id),
-            scale_info::TypeDef::BitSequence(ty) => {
-                let (order, store) = bits_from_metadata(ty, self)?;
+            scale_info::TypeDef::Compact(compact) => visitor.visit_compact(compact.type_param.id),
+            scale_info::TypeDef::BitSequence(bitseq) => {
+                let (order, store) = bits_from_metadata(bitseq, self)?;
                 visitor.visit_bit_sequence(store, order)
             }
         };
@@ -135,7 +138,7 @@ fn iter_fields(
 ) -> impl ExactSizeIterator<Item = Field<'_, u32>> {
     fields.iter().map(|f| Field {
         name: f.name.as_deref(),
-        id: &f.ty.id,
+        id: f.ty.id,
     })
 }
 
@@ -201,18 +204,18 @@ mod test {
 
     fn assert_type<T: scale_info::TypeInfo + 'static>(info: ResolvedTypeInfo) {
         let (id, types) = make_type::<T>();
-        let resolved_info = to_resolved_info(&id, &types);
+        let resolved_info = to_resolved_info(id, &types);
         assert_eq!(info, resolved_info);
     }
 
-    fn to_resolved_info(type_id: &u32, types: &PortableRegistry) -> ResolvedTypeInfo {
+    fn to_resolved_info(type_id: u32, types: &PortableRegistry) -> ResolvedTypeInfo {
         use crate::visitor;
 
         // Build a quick visitor which turns resolved type info
         // into a concrete type for us to check.
         let visitor = visitor::new((), |_, _| panic!("all methods implemented"))
             .visit_not_found(|_| ResolvedTypeInfo::NotFound)
-            .visit_composite(|_, fields| {
+            .visit_composite(|_, _, fields| {
                 let fs = fields
                     .map(|f| {
                         let inner_ty = to_resolved_info(f.id, types);
@@ -221,7 +224,7 @@ mod test {
                     .collect();
                 ResolvedTypeInfo::CompositeOf(fs)
             })
-            .visit_variant(|_, variants| {
+            .visit_variant(|_, _, variants| {
                 let vs = variants
                     .map(|v| {
                         let fs: Vec<_> = v
@@ -236,7 +239,7 @@ mod test {
                     .collect();
                 ResolvedTypeInfo::VariantOf(vs)
             })
-            .visit_sequence(|_, type_id| {
+            .visit_sequence(|_, _, type_id| {
                 ResolvedTypeInfo::SequenceOf(Box::new(to_resolved_info(type_id, types)))
             })
             .visit_array(|_, type_id, len| {
@@ -302,6 +305,7 @@ mod test {
         ]));
 
         #[derive(scale_info::TypeInfo)]
+        #[allow(dead_code)]
         struct Unnamed(bool, u8);
 
         assert_type::<Unnamed>(ResolvedTypeInfo::CompositeOf(vec![
