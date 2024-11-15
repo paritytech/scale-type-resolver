@@ -1,3 +1,7 @@
+# 0.3.0
+
+A breaking release that updates scale-info from v2.7 to 2.11 because it's exposed in the public API, this needed to sync up with other scale-info based projects.
+
 # 0.2.0
 
 - Provide a `path` iterator to composite, variant and sequence callbacks in `ResolveTypeVisitor`, so that people can access the path/name of these types. The path is also exposed in the concrete visitor implementation.
